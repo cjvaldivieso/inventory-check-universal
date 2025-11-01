@@ -1,15 +1,14 @@
+import { BrowserMultiFormatReader } from "https://cdn.jsdelivr.net/npm/@zxing/browser@latest/+esm";
+
 document.addEventListener("DOMContentLoaded", () => {
-  console.log("✅ app.js loaded");
+  console.log("✅ app.js (ZXing) loaded");
 
   let currentBin = null;
-  let inventoryMap = {};
-  let auditResults = [];
-
   const logTbody = document.getElementById("logTbody");
   const currentBinDisplay = document.getElementById("currentBin");
   const csvUpload = document.getElementById("csvUpload");
 
-  // ✅ CSV Upload
+  // === CSV Upload ===
   csvUpload.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return alert("Please select a CSV file.");
@@ -18,112 +17,99 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("file", file);
 
     try {
-      const res = await fetch("/upload-csv", {
-        method: "POST",
-        body: formData,
-      });
+      const res = await fetch("/upload-csv", { method: "POST", body: formData });
       const data = await res.json();
       alert(`✅ ${data.message} (${data.total} records loaded)`);
     } catch (err) {
-      console.error("❌ Upload error:", err);
+      console.error("Upload error:", err);
       alert("Error uploading CSV.");
     }
   });
 
-  // ✅ Start QR Scanning
+  // === Start QR Scanner ===
   async function startQRScan(type) {
-    console.log("Starting QR scan:", type);
-    const video = document.createElement("video");
-    video.style.width = "100%";
-    video.style.maxWidth = "400px";
-    video.style.borderRadius = "10px";
-    document.body.appendChild(video);
+    console.log("Starting QR scan for:", type);
+    const codeReader = new BrowserMultiFormatReader();
+
+    const previewElem = document.createElement("video");
+    previewElem.style.width = "100%";
+    previewElem.style.maxWidth = "420px";
+    previewElem.style.borderRadius = "12px";
+    previewElem.style.marginTop = "20px";
+    document.body.appendChild(previewElem);
+
+    alert("📸 Point your camera at the QR code...");
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment" },
-      });
-      video.srcObject = stream;
-      await video.play();
+      const result = await codeReader.decodeOnceFromVideoDevice(undefined, previewElem);
+      console.log("✅ QR Detected:", result.text);
 
-      const canvas = document.createElement("canvas");
-      const context = canvas.getContext("2d");
+      // === Stop camera stream cleanly ===
+      const stream = previewElem.srcObject;
+      if (stream && stream.getTracks) stream.getTracks().forEach((t) => t.stop());
+      previewElem.srcObject = null;
+      previewElem.remove();
+      codeReader.reset();
 
-      const scan = async () => {
-        if (video.readyState === video.HAVE_ENOUGH_DATA) {
-          canvas.width = video.videoWidth;
-          canvas.height = video.videoHeight;
-          context.drawImage(video, 0, 0, canvas.width, canvas.height);
-          const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+      // === Force UI refresh (fixes iOS black screen) ===
+      document.body.style.backgroundColor = "#0B0C2A";
+      setTimeout(() => window.scrollTo(0, 0), 100);
 
-          const code = jsQR(imageData.data, imageData.width, imageData.height, {
-            inversionAttempts: "dontInvert",
-          });
+      // === Handle scanned data ===
+      if (type === "bin") {
+        currentBin = result.text.trim();
+        currentBinDisplay.textContent = currentBin;
+        alert(`✅ Bin set to: ${currentBin}`);
+      } else {
+        const itemId = result.text.trim();
+        const res = await fetch(`/check-item/${itemId}/${currentBin}`);
+        const data = await res.json();
 
-          if (code) {
-            console.log("✅ QR detected:", code.data);
-            stream.getTracks().forEach((t) => t.stop());
-            video.remove();
-
-            if (type === "bin") {
-              currentBin = code.data.trim();
-              currentBinDisplay.textContent = currentBin;
-              alert(`✅ Bin set to: ${currentBin}`);
-            } else {
-              const itemId = code.data.trim();
-              const tr = document.createElement("tr");
-              const res = await fetch(`/check-item/${itemId}/${currentBin}`);
-              const data = await res.json();
-
-              let status = data.status;
-              tr.innerHTML = `
-                <td>${itemId}</td>
-                <td>${data.correctBin || "-"}</td>
-                <td>${currentBin || "-"}</td>
-                <td>${status}</td>
-              `;
-              logTbody.prepend(tr);
-            }
-            return;
-          }
-        }
-        requestAnimationFrame(scan);
-      };
-      scan();
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${itemId}</td>
+          <td>${data.correctBin || "-"}</td>
+          <td>${currentBin || "-"}</td>
+          <td>${data.status}</td>
+        `;
+        logTbody.prepend(tr);
+      }
     } catch (err) {
-      console.error("❌ Camera access error:", err);
-      alert("Camera access denied or not supported. Please check permissions and try again.");
-      video.remove();
+      console.error("❌ Scan error:", err);
+      alert("Camera access denied or scanning failed. Please enable camera permissions in Safari Settings.");
+      previewElem.remove();
+      codeReader.reset();
     }
   }
 
-  // ✅ Button bindings
   document.getElementById("scanBinBtn").onclick = () => startQRScan("bin");
   document.getElementById("scanItemBtn").onclick = () => startQRScan("item");
 
-  // ✅ PWA install
+  // === PWA Install Button ===
   let deferredPrompt;
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
     deferredPrompt = e;
-    const btn = document.createElement("button");
-    btn.textContent = "Install Shappi Inventory App";
-    btn.style.position = "fixed";
-    btn.style.bottom = "20px";
-    btn.style.left = "50%";
-    btn.style.transform = "translateX(-50%)";
-    btn.style.padding = "10px 20px";
-    btn.style.backgroundColor = "#6c47ff";
-    btn.style.color = "#fff";
-    btn.style.border = "none";
-    btn.style.borderRadius = "10px";
-    btn.onclick = async () => {
-      btn.remove();
+
+    const installBtn = document.createElement("button");
+    installBtn.textContent = "Install Shappi Inventory App";
+    installBtn.style.position = "fixed";
+    installBtn.style.bottom = "20px";
+    installBtn.style.left = "50%";
+    installBtn.style.transform = "translateX(-50%)";
+    installBtn.style.padding = "10px 20px";
+    installBtn.style.backgroundColor = "#6c47ff";
+    installBtn.style.color = "#fff";
+    installBtn.style.border = "none";
+    installBtn.style.borderRadius = "10px";
+    installBtn.onclick = async () => {
+      installBtn.remove();
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
-      console.log("User response to install:", outcome);
+      console.log("User install response:", outcome);
       deferredPrompt = null;
     };
-    document.body.appendChild(btn);
+    document.body.appendChild(installBtn);
   });
 });
+
