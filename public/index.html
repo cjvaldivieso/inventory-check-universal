@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shappi Inventory Check</title>
+
+  <!-- PWA Manifest -->
+  <link rel="manifest" href="manifest.json" />
+
+  <!-- App Styles -->
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="icons/shappi-logo.png" />
+</head>
+<body>
+  <header>
+    <img src="icons/shappi-logo.png" alt="Shappi Logo" class="logo" />
+    <h1>📦 Shappi Inventory Check</h1>
+  </header>
+
+  <section class="upload-section">
+    <label for="csvUpload" class="upload-label">📁 Choose CSV File</label>
+    <input type="file" id="csvUpload" name="file" accept=".csv" />
+  </section>
+
+  <section class="scan-section">
+    <button id="scanBinBtn">Scan Bin QR</button>
+    <button id="scanItemBtn">Scan Item QR</button>
+    <div id="currentBinContainer">
+      Current Bin: <span id="currentBin">None</span>
+    </div>
+  </section>
+
+  <section class="table-section">
+    <table id="logTable">
+      <thead>
+        <tr>
+          <th>Item ID</th>
+          <th>Expected Bin</th>
+          <th>Scanned Bin</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="logTbody"></tbody>
+    </table>
+  </section>
+
+  <section class="buttons">
+    <button id="finalizeBtn">Finalize Audit</button>
+    <button id="exportCsvBtn">Export CSV</button>
+  </section>
+
+  <script src="app.js"></script>
+
+  <!-- Register Service Worker -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('service-worker.js')
+          .then(() => console.log('✅ Service Worker Registered'))
+          .catch(err => console.error('Service Worker Failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>
+

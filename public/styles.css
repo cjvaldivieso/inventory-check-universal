@@ -1,0 +1,185 @@
+/* 🌈 SHAPPI BRAND COLORS */
+:root {
+  --primary: #6c63ff; /* purple */
+  --secondary: #ffffff;
+  --accent: #ff6b6b; /* coral red */
+  --bg: #f7f7fa;
+  --text: #333;
+  --success: #3dc97c;
+  --danger: #ff4d4d;
+}
+
+body {
+  font-family: "Inter", sans-serif;
+  margin: 0;
+  background-color: var(--bg);
+  color: var(--text);
+  text-align: center;
+  padding: 1rem;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: var(--secondary);
+  padding: 1rem;
+  border-radius: 12px;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+  margin-bottom: 1.5rem;
+}
+
+.logo {
+  width: 60px;
+  height: 60px;
+  object-fit: contain;
+}
+
+h1 {
+  font-size: 1.6rem;
+  color: var(--primary);
+}
+
+.upload-section,
+.scan-section,
+.table-section,
+.buttons {
+  margin: 1rem 0;
+}
+
+.upload-label {
+  display: inline-block;
+  padding: 0.75rem 1.25rem;
+  background-color: var(--primary);
+  color: var(--secondary);
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+input[type="file"] {
+  display: none;
+}
+
+button {
+  background-color: var(--primary);
+  color: var(--secondary);
+  border: none;
+  padding: 0.75rem 1.25rem;
+  border-radius: 8px;
+  cursor: pointer;
+  margin: 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: all 0.2s ease-in-out;
+}
+
+button:hover {
+  background-color: #5848e8;
+}
+
+button:disabled {
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+#currentBinContainer {
+  font-size: 1rem;
+  margin-top: 0.5rem;
+  color: var(--text);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 1rem;
+  background: var(--secondary);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+}
+
+th,
+td {
+  padding: 0.75rem;
+  border-bottom: 1px solid #ddd;
+}
+
+th {
+  background-color: var(--primary);
+  color: var(--secondary);
+  text-transform: uppercase;
+  font-size: 0.9rem;
+}
+
+tr.match {
+  background-color: #e9f8f0;
+  color: var(--success);
+}
+
+tr.mismatch {
+  background-color: #ffeaea;
+  color: var(--danger);
+}
+
+/* ✅ QR SCANNER OVERLAY */
+.scanner-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 9999;
+}
+
+video {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 90%;
+  max-width: 500px;
+  border: 5px solid var(--primary);
+  border-radius: 12px;
+  z-index: 10000;
+}
+
+/* ✅ Install Button */
+.install-btn {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  background-color: var(--accent);
+  color: white;
+  padding: 0.75rem 1.25rem;
+  border-radius: 50px;
+  border: none;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+  z-index: 2000;
+}
+
+/* 📱 Mobile Adjustments */
+@media (max-width: 768px) {
+  header {
+    flex-direction: column;
+  }
+
+  h1 {
+    font-size: 1.3rem;
+  }
+
+  button {
+    width: 80%;
+  }
+
+  video {
+    width: 100%;
+  }
+}
+
