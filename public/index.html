@@ -4,117 +4,173 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Shappi Inventory Check</title>
-  <link rel="manifest" href="manifest.json" />
-  <link rel="stylesheet" href="styles.css" />
+
+  <!-- PWA + QR -->
+  <link rel="manifest" href="/manifest.json" />
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+
   <style>
-    body {
-      font-family: "Helvetica Neue", Arial, sans-serif;
-      background-color: #0B0C2A;
-      color: #FFFFFF;
-      text-align: center;
-      margin: 0;
-      padding: 0;
+    :root {
+      --ink: #0B0C2A;
+      --brand: #6C47FF;
+      --brand-2: #7E5BFF;
+      --paper: #0B0C2A;   /* page bg */
+      --card: #14152f;    /* section bg */
+      --text: #ffffff;
+      --muted: #cccccc;
     }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      background: var(--paper);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
     header {
-      background-color: #6C47FF;
-      padding: 10px 0;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+      background: var(--brand);
+      padding: 18px 16px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
     }
     header img {
-      height: 50px;
-    }
-    h1 {
-      margin: 10px 0;
-      font-size: 1.5rem;
-    }
-    input[type="file"], button {
-      background-color: #6C47FF;
-      border: none;
-      color: white;
-      padding: 10px 16px;
-      margin: 8px;
-      border-radius: 8px;
-      font-size: 1rem;
-      cursor: pointer;
-    }
-    button:hover {
-      background-color: #5934d2;
-    }
-    table {
-      margin: 15px auto;
-      width: 90%;
-      border-collapse: collapse;
-      background-color: #1A1B3C;
-      color: white;
-      border-radius: 8px;
-      overflow: hidden;
-    }
-    th, td {
-      border: 1px solid #333;
-      padding: 8px;
-    }
-    th {
-      background-color: #6C47FF;
-    }
-    .status-match { color: #2ECC71; font-weight: bold; }
-    .status-mismatch { color: #F1C40F; font-weight: bold; }
-    .status-missing { color: #E74C3C; font-weight: bold; }
-    #summary {
-      background-color: #FFFFFF;
-      color: #0B0C2A;
+      width: 48px;
+      height: 48px;
+      object-fit: contain;
       border-radius: 10px;
-      width: 90%;
-      margin: 20px auto;
-      padding: 10px;
+      background: #fff;
+      padding: 6px;
     }
-    #timestamp {
-      font-size: 0.9rem;
-      color: #ccc;
+    header h1 {
+      margin: 0;
+      font-size: 1.4rem;
+      font-weight: 700;
+    }
+
+    main { padding: 22px 14px; max-width: 1100px; margin: 0 auto; }
+
+    .toolbar { text-align: center; margin: 8px 0 18px; }
+
+    .btn {
+      display: inline-block;
+      background: var(--brand);
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      margin: 8px;
+    }
+    .btn.secondary { background: var(--brand-2); }
+
+    #uploadSection {
+      background: var(--card);
+      border-radius: 14px;
+      padding: 16px;
+      margin: 14px auto 18px;
+      max-width: 620px;
+      text-align: center;
+      box-shadow: 0 6px 18px rgba(0,0,0,.25);
+    }
+    #timestamp { color: var(--muted); font-size: .9rem; margin-top: 8px; }
+
+    /* table */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: var(--brand-2);
+      color: #fff;
+      padding: 12px 10px;
+      text-align: left;
+      font-size: .95rem;
+      white-space: nowrap;
+    }
+    tbody td {
+      background: #10112a;
+      padding: 10px;
+      border-top: 1px solid #24254a;
+      font-size: .95rem;
+      white-space: nowrap;
+    }
+
+    .summary-card {
+      background: #ffffff;
+      color: #0b0c2a;
+      border-radius: 14px;
+      padding: 18px;
+      margin: 18px 0;
+    }
+    .summary-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 12px; }
+    .summary-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; }
+    .pill { background: #f4f6ff; border-radius: 10px; padding: 10px 12px; font-weight: 600; }
+
+    @media (max-width: 600px) {
+      header h1 { font-size: 1.1rem; }
+      .summary-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <header>
-    <img src="shappi-inventory.png" alt="Shappi Logo" />
+    <img src="/icons/shappi-inventory.png" alt="Shappi logo" onerror="this.style.display='none'">
+    <h1>📦 Shappi Inventory Check</h1>
   </header>
 
-  <h1>📦 Shappi Inventory Check</h1>
+  <main>
+    <!-- CSV Upload -->
+    <section id="uploadSection">
+      <div style="font-weight:700; margin-bottom:8px;">📤 Choose CSV File</div>
+      <input type="file" id="csvUpload" accept=".csv" class="btn" style="background:#fff;color:#0B0C2A;">
+      <div id="timestamp">No CSV uploaded yet</div>
+    </section>
 
-  <div>
-    <input type="file" id="csvUpload" accept=".csv" />
-    <div id="timestamp"></div>
-  </div>
+    <!-- Scanner toolbar -->
+    <div class="toolbar">
+      <button id="scanBinBtn" class="btn">Scan Bin QR</button>
+      <button id="scanItemBtn" class="btn secondary">Scan Item QR</button>
+      <div id="currentBin" style="margin-top:8px; color:#ccc;">Current Bin: None</div>
+    </div>
 
-  <div>
-    <button id="scanBinBtn">Scan Bin QR</button>
-    <button id="scanItemBtn">Scan Item QR</button>
-  </div>
+    <!-- Results table -->
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Item ID</th>
+            <th>Warehouse Bin ID</th>
+            <th>WH Received</th>
+            <th>Shappi Status</th>
+            <th>Category</th>
+            <th>Subcategory</th>
+            <th>Result</th>
+          </tr>
+        </thead>
+        <tbody id="logTbody"></tbody>
+      </table>
+    </div>
 
-  <div>Current Bin: <span id="currentBin">None</span></div>
+    <!-- Live Summary -->
+    <div class="summary-card">
+      <div class="summary-title">📊 Live Summary</div>
+      <div class="summary-grid">
+        <div class="pill">Scanned Items: <span id="sumScanned">0</span></div>
+        <div class="pill">Correct: <span id="sumCorrect">0</span></div>
+        <div class="pill">Misplaced: <span id="sumMisplaced">0</span></div>
+        <div class="pill">Missing (by CSV): <span id="sumMissing">0</span></div>
+      </div>
+      <div style="margin-top:14px;">
+        <button id="exportSummaryBtn" class="btn">Export Summary CSV</button>
+      </div>
+    </div>
+  </main>
 
-  <table id="logTable">
-    <thead>
-      <tr>
-        <th>Item ID</th>
-        <th>Warehouse Bin ID</th>
-        <th>WH Received</th>
-        <th>Shappi Status</th>
-        <th>Category</th>
-        <th>Subcategory</th>
-        <th>Result</th>
-      </tr>
-    </thead>
-    <tbody id="logTbody"></tbody>
-  </table>
-
-  <div id="summary">
-    <h3>📊 Live Summary</h3>
-    <div id="summaryCounts"></div>
-    <button id="exportSummaryBtn">Export Summary CSV</button>
-  </div>
-
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-  <script src="app.js"></script>
+  <script src="/app.js"></script>
 </body>
 </html>
 
