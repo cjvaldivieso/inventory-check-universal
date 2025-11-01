@@ -1,14 +1,15 @@
-console.log("✅ app.js loaded successfully");
-
 document.addEventListener("DOMContentLoaded", () => {
-  const csvUpload = document.getElementById("csvUpload");
+  console.log("✅ app.js loaded");
+
+  let currentBin = null;
+  let inventoryMap = {};
+  let auditResults = [];
+
   const logTbody = document.getElementById("logTbody");
   const currentBinDisplay = document.getElementById("currentBin");
-  let inventoryData = [];
-  let auditResults = [];
-  let currentBin = null;
+  const csvUpload = document.getElementById("csvUpload");
 
-  // ✅ CSV Upload Handler
+  // ✅ CSV Upload
   csvUpload.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return alert("Please select a CSV file.");
@@ -22,125 +23,107 @@ document.addEventListener("DOMContentLoaded", () => {
         body: formData,
       });
       const data = await res.json();
-      inventoryData = data.inventory;
-      alert(`✅ ${data.total} records loaded successfully!`);
+      alert(`✅ ${data.message} (${data.total} records loaded)`);
     } catch (err) {
-      console.error("❌ Error uploading CSV:", err);
-      alert("Error uploading CSV file.");
+      console.error("❌ Upload error:", err);
+      alert("Error uploading CSV.");
     }
   });
 
-  // ✅ QR Code Scanner
-  async function startScan(mode) {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-      const video = document.createElement("video");
-      video.srcObject = stream;
-      video.setAttribute("playsinline", true);
-      video.play();
+  // ✅ Start QR Scanning
+  async function startQRScan(type) {
+    console.log("Starting QR scan:", type);
+    const video = document.createElement("video");
+    video.style.width = "100%";
+    video.style.maxWidth = "400px";
+    video.style.borderRadius = "10px";
+    document.body.appendChild(video);
 
-      const overlay = document.createElement("div");
-      overlay.classList.add("scanner-overlay");
-      document.body.appendChild(video);
-      document.body.appendChild(overlay);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment" },
+      });
+      video.srcObject = stream;
+      await video.play();
 
       const canvas = document.createElement("canvas");
       const context = canvas.getContext("2d");
-      const qrDetector = new BarcodeDetector({ formats: ["qr_code"] });
 
-      const scanLoop = async () => {
+      const scan = async () => {
         if (video.readyState === video.HAVE_ENOUGH_DATA) {
           canvas.width = video.videoWidth;
           canvas.height = video.videoHeight;
           context.drawImage(video, 0, 0, canvas.width, canvas.height);
-          try {
-            const barcodes = await qrDetector.detect(canvas);
-            if (barcodes.length > 0) {
-              const code = barcodes[0].rawValue;
-              handleScanResult(code, mode);
-              stopScan();
-              return;
+          const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "dontInvert",
+          });
+
+          if (code) {
+            console.log("✅ QR detected:", code.data);
+            stream.getTracks().forEach((t) => t.stop());
+            video.remove();
+
+            if (type === "bin") {
+              currentBin = code.data.trim();
+              currentBinDisplay.textContent = currentBin;
+              alert(`✅ Bin set to: ${currentBin}`);
+            } else {
+              const itemId = code.data.trim();
+              const tr = document.createElement("tr");
+              const res = await fetch(`/check-item/${itemId}/${currentBin}`);
+              const data = await res.json();
+
+              let status = data.status;
+              tr.innerHTML = `
+                <td>${itemId}</td>
+                <td>${data.correctBin || "-"}</td>
+                <td>${currentBin || "-"}</td>
+                <td>${status}</td>
+              `;
+              logTbody.prepend(tr);
             }
-          } catch (err) {
-            console.error("❌ Barcode detection error:", err);
+            return;
           }
         }
-        requestAnimationFrame(scanLoop);
+        requestAnimationFrame(scan);
       };
-
-      const stopScan = () => {
-        stream.getTracks().forEach((track) => track.stop());
-        video.remove();
-        overlay.remove();
-      };
-
-      scanLoop();
+      scan();
     } catch (err) {
-      alert("Camera access denied or not supported. Please check permissions.");
-      console.error("Camera error:", err);
+      console.error("❌ Camera access error:", err);
+      alert("Camera access denied or not supported. Please check permissions and try again.");
+      video.remove();
     }
   }
 
-  // ✅ Handle QR result
-  function handleScanResult(code, mode) {
-    if (mode === "bin") {
-      currentBin = code;
-      currentBinDisplay.textContent = code;
-    } else if (mode === "item") {
-      const record = inventoryData.find((r) => r["Item ID"] === code);
-      const expectedBin = record ? record["Warehouse Bin ID"] : "Unknown";
-      const status = expectedBin === currentBin ? "Match" : "Mismatch";
-      const tr = document.createElement("tr");
-      tr.innerHTML = `<td>${code}</td><td>${expectedBin}</td><td>${currentBin}</td><td>${status}</td>`;
-      tr.className = status.toLowerCase();
-      logTbody.prepend(tr);
-      auditResults.push({ code, expectedBin, currentBin, status });
-    }
-  }
+  // ✅ Button bindings
+  document.getElementById("scanBinBtn").onclick = () => startQRScan("bin");
+  document.getElementById("scanItemBtn").onclick = () => startQRScan("item");
 
-  // ✅ Button Listeners
-  document.getElementById("scanBinBtn").onclick = () => startScan("bin");
-  document.getElementById("scanItemBtn").onclick = () => startScan("item");
-  document.getElementById("exportCsvBtn").onclick = () => {
-    const csvContent = [
-      ["Item ID", "Expected Bin", "Scanned Bin", "Status"],
-      ...auditResults.map((r) => [r.code, r.expectedBin, r.currentBin, r.status]),
-    ]
-      .map((e) => e.join(","))
-      .join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "shappi-audit.csv";
-    a.click();
-  };
-
-  // ✅ PWA Install Prompt
+  // ✅ PWA install
   let deferredPrompt;
   window.addEventListener("beforeinstallprompt", (e) => {
     e.preventDefault();
     deferredPrompt = e;
-    const installBtn = document.createElement("button");
-    installBtn.textContent = "📲 Install Shappi App";
-    installBtn.className = "install-btn";
-    installBtn.onclick = async () => {
-      installBtn.style.display = "none";
+    const btn = document.createElement("button");
+    btn.textContent = "Install Shappi Inventory App";
+    btn.style.position = "fixed";
+    btn.style.bottom = "20px";
+    btn.style.left = "50%";
+    btn.style.transform = "translateX(-50%)";
+    btn.style.padding = "10px 20px";
+    btn.style.backgroundColor = "#6c47ff";
+    btn.style.color = "#fff";
+    btn.style.border = "none";
+    btn.style.borderRadius = "10px";
+    btn.onclick = async () => {
+      btn.remove();
       deferredPrompt.prompt();
-      await deferredPrompt.userChoice;
+      const { outcome } = await deferredPrompt.userChoice;
+      console.log("User response to install:", outcome);
       deferredPrompt = null;
     };
-    document.body.appendChild(installBtn);
+    document.body.appendChild(btn);
   });
 });
-
-// ✅ Register the Service Worker for PWA support
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .register("/service-worker.js")
-      .then((reg) => console.log("✅ Service Worker registered:", reg.scope))
-      .catch((err) => console.error("❌ Service Worker registration failed:", err));
-  });
-}
-
