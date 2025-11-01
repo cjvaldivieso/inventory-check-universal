@@ -4,67 +4,117 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Shappi Inventory Check</title>
-
-  <!-- PWA Manifest -->
   <link rel="manifest" href="manifest.json" />
-
-  <!-- App Styles -->
   <link rel="stylesheet" href="styles.css" />
-
-  <!-- Favicon -->
-  <link rel="icon" type="image/png" href="icons/shappi-logo.png" />
+  <style>
+    body {
+      font-family: "Helvetica Neue", Arial, sans-serif;
+      background-color: #0B0C2A;
+      color: #FFFFFF;
+      text-align: center;
+      margin: 0;
+      padding: 0;
+    }
+    header {
+      background-color: #6C47FF;
+      padding: 10px 0;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    }
+    header img {
+      height: 50px;
+    }
+    h1 {
+      margin: 10px 0;
+      font-size: 1.5rem;
+    }
+    input[type="file"], button {
+      background-color: #6C47FF;
+      border: none;
+      color: white;
+      padding: 10px 16px;
+      margin: 8px;
+      border-radius: 8px;
+      font-size: 1rem;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #5934d2;
+    }
+    table {
+      margin: 15px auto;
+      width: 90%;
+      border-collapse: collapse;
+      background-color: #1A1B3C;
+      color: white;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    th, td {
+      border: 1px solid #333;
+      padding: 8px;
+    }
+    th {
+      background-color: #6C47FF;
+    }
+    .status-match { color: #2ECC71; font-weight: bold; }
+    .status-mismatch { color: #F1C40F; font-weight: bold; }
+    .status-missing { color: #E74C3C; font-weight: bold; }
+    #summary {
+      background-color: #FFFFFF;
+      color: #0B0C2A;
+      border-radius: 10px;
+      width: 90%;
+      margin: 20px auto;
+      padding: 10px;
+    }
+    #timestamp {
+      font-size: 0.9rem;
+      color: #ccc;
+    }
+  </style>
 </head>
 <body>
   <header>
-    <img src="icons/shappi-logo.png" alt="Shappi Logo" class="logo" />
-    <h1>📦 Shappi Inventory Check</h1>
+    <img src="shappi-inventory.png" alt="Shappi Logo" />
   </header>
 
-  <section class="upload-section">
-    <label for="csvUpload" class="upload-label">📁 Choose CSV File</label>
-    <input type="file" id="csvUpload" name="file" accept=".csv" />
-  </section>
+  <h1>📦 Shappi Inventory Check</h1>
 
-  <section class="scan-section">
+  <div>
+    <input type="file" id="csvUpload" accept=".csv" />
+    <div id="timestamp"></div>
+  </div>
+
+  <div>
     <button id="scanBinBtn">Scan Bin QR</button>
     <button id="scanItemBtn">Scan Item QR</button>
-    <div id="currentBinContainer">
-      Current Bin: <span id="currentBin">None</span>
-    </div>
-  </section>
+  </div>
 
-  <section class="table-section">
-    <table id="logTable">
-      <thead>
-        <tr>
-          <th>Item ID</th>
-          <th>Expected Bin</th>
-          <th>Scanned Bin</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody id="logTbody"></tbody>
-    </table>
-  </section>
+  <div>Current Bin: <span id="currentBin">None</span></div>
 
-  <section class="buttons">
-    <button id="finalizeBtn">Finalize Audit</button>
-    <button id="exportCsvBtn">Export CSV</button>
-  </section>
+  <table id="logTable">
+    <thead>
+      <tr>
+        <th>Item ID</th>
+        <th>Warehouse Bin ID</th>
+        <th>WH Received</th>
+        <th>Shappi Status</th>
+        <th>Category</th>
+        <th>Subcategory</th>
+        <th>Result</th>
+      </tr>
+    </thead>
+    <tbody id="logTbody"></tbody>
+  </table>
 
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-<script src="app.js"></script>
+  <div id="summary">
+    <h3>📊 Live Summary</h3>
+    <div id="summaryCounts"></div>
+    <button id="exportSummaryBtn">Export Summary CSV</button>
+  </div>
 
-  <!-- Register Service Worker -->
-  <script>
-    if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => {
-        navigator.serviceWorker.register('service-worker.js')
-          .then(() => console.log('✅ Service Worker Registered'))
-          .catch(err => console.error('Service Worker Failed:', err));
-      });
-    }
-  </script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
 
