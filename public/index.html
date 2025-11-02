@@ -3,174 +3,86 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shappi Inventory Check</title>
-
-  <!-- PWA + QR -->
-  <link rel="manifest" href="/manifest.json" />
-  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-
+  <title>Shappi Inventory Audit</title>
+  <link rel="manifest" href="manifest.json" />
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
   <style>
-    :root {
-      --ink: #0B0C2A;
-      --brand: #6C47FF;
-      --brand-2: #7E5BFF;
-      --paper: #0B0C2A;   /* page bg */
-      --card: #14152f;    /* section bg */
-      --text: #ffffff;
-      --muted: #cccccc;
-    }
-
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: 'Helvetica Neue', Arial, sans-serif;
-      background: var(--paper);
-      color: var(--text);
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-    }
-
-    header {
-      background: var(--brand);
-      padding: 18px 16px;
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-    header img {
-      width: 48px;
-      height: 48px;
-      object-fit: contain;
-      border-radius: 10px;
-      background: #fff;
-      padding: 6px;
-    }
-    header h1 {
-      margin: 0;
-      font-size: 1.4rem;
-      font-weight: 700;
-    }
-
-    main { padding: 22px 14px; max-width: 1100px; margin: 0 auto; }
-
-    .toolbar { text-align: center; margin: 8px 0 18px; }
-
-    .btn {
-      display: inline-block;
-      background: var(--brand);
-      color: #fff;
-      border: none;
-      border-radius: 10px;
-      padding: 12px 18px;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      margin: 8px;
-    }
-    .btn.secondary { background: var(--brand-2); }
-
-    #uploadSection {
-      background: var(--card);
-      border-radius: 14px;
-      padding: 16px;
-      margin: 14px auto 18px;
-      max-width: 620px;
-      text-align: center;
-      box-shadow: 0 6px 18px rgba(0,0,0,.25);
-    }
-    #timestamp { color: var(--muted); font-size: .9rem; margin-top: 8px; }
-
-    /* table */
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; }
-    thead th {
-      background: var(--brand-2);
-      color: #fff;
-      padding: 12px 10px;
-      text-align: left;
-      font-size: .95rem;
-      white-space: nowrap;
-    }
-    tbody td {
-      background: #10112a;
-      padding: 10px;
-      border-top: 1px solid #24254a;
-      font-size: .95rem;
-      white-space: nowrap;
-    }
-
-    .summary-card {
-      background: #ffffff;
-      color: #0b0c2a;
-      border-radius: 14px;
-      padding: 18px;
-      margin: 18px 0;
-    }
-    .summary-title { font-size: 1.1rem; font-weight: 700; margin-bottom: 12px; }
-    .summary-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 12px; }
-    .pill { background: #f4f6ff; border-radius: 10px; padding: 10px 12px; font-weight: 600; }
-
-    @media (max-width: 600px) {
-      header h1 { font-size: 1.1rem; }
-      .summary-grid { grid-template-columns: 1fr; }
-    }
+    body{font-family:Helvetica,Arial,sans-serif;background:#0B0C2A;color:#fff;margin:0;text-align:center}
+    header img{height:60px;margin:14px auto 4px;display:block}
+    h2{margin:6px 0 12px}
+    .row{margin:10px auto;max-width:900px}
+    .btn{background:#6c47ff;border:none;color:#fff;border-radius:10px;padding:10px 16px;margin:6px;cursor:pointer;font-size:15px}
+    .btn:hover{background:#5633d1}
+    table{margin:16px auto;border-collapse:collapse;width:95%;max-width:980px}
+    th,td{border:1px solid #3b3e7a;padding:8px;font-size:14px}
+    th{background:#2c2f6c}
+    #csvInfo{color:#bdbde6;font-size:13px;margin-top:6px}
+    .status-pill{display:inline-block;border-radius:8px;padding:2px 8px;font-weight:600}
+    .green{background:#28a745}
+    .yellow{background:#ffc107;color:#000}
+    .red{background:#dc3545}
+    .grey{background:#6c757d}
+    .overlay{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;align-items:center;justify-content:center}
+    .overlay video{width:92%;max-width:700px;border-radius:12px}
   </style>
 </head>
 <body>
   <header>
-    <img src="/icons/shappi-inventory.png" alt="Shappi logo" onerror="this.style.display='none'">
-    <h1>📦 Shappi Inventory Check</h1>
+    <img src="icons/shappi-inventory.png" alt="Shappi Logo" onerror="this.src='shappi-inventory.png'">
+    <h2>📦 Shappi Inventory Audit</h2>
   </header>
 
-  <main>
-    <!-- CSV Upload -->
-    <section id="uploadSection">
-      <div style="font-weight:700; margin-bottom:8px;">📤 Choose CSV File</div>
-      <input type="file" id="csvUpload" accept=".csv" class="btn" style="background:#fff;color:#0B0C2A;">
-      <div id="timestamp">No CSV uploaded yet</div>
-    </section>
+  <div class="row">
+    <label for="auditorSelect"><b>Select Auditor:</b></label>
+    <select id="auditorSelect" class="btn" style="padding:8px 10px">
+      <option value="">-- Choose Your Name --</option>
+      <option value="Anslee">Anslee</option>
+      <option value="Caz">Caz</option>
+      <option value="CJ">CJ</option>
+      <option value="Eric">Eric</option>
+      <option value="Greg">Greg</option>
+      <option value="Justin">Justin</option>
+      <option value="__add_new__">+ Add New Auditor</option>
+    </select>
+    <div id="currentAuditorDisplay" style="margin-top:8px;font-weight:700;color:#6c47ff">Current Auditor: None</div>
+  </div>
 
-    <!-- Scanner toolbar -->
-    <div class="toolbar">
-      <button id="scanBinBtn" class="btn">Scan Bin QR</button>
-      <button id="scanItemBtn" class="btn secondary">Scan Item QR</button>
-      <div id="currentBin" style="margin-top:8px; color:#ccc;">Current Bin: None</div>
-    </div>
+  <div class="row">
+    <input type="file" id="csvUpload" accept=".csv" class="btn" />
+    <div id="csvInfo">No CSV uploaded yet.</div>
+  </div>
 
-    <!-- Results table -->
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Item ID</th>
-            <th>Warehouse Bin ID</th>
-            <th>WH Received</th>
-            <th>Shappi Status</th>
-            <th>Category</th>
-            <th>Subcategory</th>
-            <th>Result</th>
-          </tr>
-        </thead>
-        <tbody id="logTbody"></tbody>
-      </table>
-    </div>
+  <div class="row">
+    <button id="scanBinBtn" class="btn">Scan Bin QR</button>
+    <button id="scanItemBtn" class="btn">Scan Item QR (Continuous)</button>
+    <button id="endBinBtn" class="btn">End Bin Audit</button>
+    <button id="exportLogBtn" class="btn">Export On-Screen Results</button>
+    <button id="exportSummaryBtn" class="btn">Download Full Audit CSV</button>
+  </div>
 
-    <!-- Live Summary -->
-    <div class="summary-card">
-      <div class="summary-title">📊 Live Summary</div>
-      <div class="summary-grid">
-        <div class="pill">Scanned Items: <span id="sumScanned">0</span></div>
-        <div class="pill">Correct: <span id="sumCorrect">0</span></div>
-        <div class="pill">Misplaced: <span id="sumMisplaced">0</span></div>
-        <div class="pill">Missing (by CSV): <span id="sumMissing">0</span></div>
-      </div>
-      <div style="margin-top:14px;">
-        <button id="exportSummaryBtn" class="btn">Export Summary CSV</button>
-      </div>
-    </div>
-  </main>
+  <div class="row" style="font-weight:700">Current Bin: <span id="currentBin">None</span></div>
 
-  <script src="/app.js"></script>
+  <div class="row">
+    <table>
+      <thead>
+        <tr>
+          <th>Item ID</th>
+          <th>Expected Bin</th>
+          <th>Scanned Bin</th>
+          <th>WH Received</th>
+          <th>Shappi Status</th>
+          <th>Category</th>
+          <th>Subcategory</th>
+          <th>Status</th>
+          <th>Resolved</th>
+        </tr>
+      </thead>
+      <tbody id="logTbody"></tbody>
+    </table>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
 
