@@ -32,21 +32,45 @@ let audits = {}; // { [binId]: { auditor, startTime, endTime, items:[{itemId,exp
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload-csv", upload.single("file"), (req, res) => {
-// Store upload time in New York timezone
-const uploadTimeEST = moment().tz("America/New_York").format("MM/DD/YYYY hh:mm A z");
-lastCsvMeta = { uploadedAt: uploadTimeEST };
+  // Store upload time in New York timezone (keep this feature)
+  const uploadTimeEST = moment().tz("America/New_York").format("MM/DD/YYYY hh:mm A");
+  lastCsvMeta = { uploadedAt: uploadTimeEST };
 
+  const rows = [];
   fs.createReadStream(req.file.path)
     .pipe(csv())
-    .on("data", d => rows.push(d))
+    .on("data", (d) => {
+      // Normalize keys and values to avoid CSV mismatch
+      const normalized = {};
+      for (const key in d) {
+        const cleanKey = key.trim().toLowerCase(); // normalize headers
+        normalized[cleanKey] = (d[key] || "").trim(); // normalize cell data
+      }
+      rows.push(normalized);
+    })
     .on("end", () => {
       try { fs.unlinkSync(req.file.path); } catch {}
+
       inventoryData = rows;
-      lastCsvTimestamp = new Date().toLocaleString();
+      inventoryMap = {};
+
+      // Build lookup map with normalized Item IDs (uppercase)
+      for (const record of rows) {
+        const itemId = (record["item id"] || "").trim().toUpperCase();
+        if (itemId) inventoryMap[itemId] = record;
+      }
+
+      lastCsvTimestamp = uploadTimeEST;
       io.emit("csvUpdated", { total: rows.length, timestamp: lastCsvTimestamp });
-      res.json({ message: "CSV uploaded successfully", total: rows.length, timestamp: lastCsvTimestamp });
+
+      res.json({
+        message: "CSV uploaded successfully",
+        total: rows.length,
+        time: lastCsvTimestamp,
+      });
     });
 });
+
 
 app.get("/csv-status", (req, res) => {
   res.json({ total: inventoryData.length, timestamp: lastCsvTimestamp });
@@ -74,16 +98,18 @@ app.post("/audit/scan", (req, res) => {
   if (!audits[binId]) return res.status(400).json({ error: "Bin not active. Scan Bin QR first." });
   if (!inventoryData.length) return res.status(400).json({ error: "No CSV loaded" });
 
-const normalizedItemId = (itemId || "").toString().trim().toLowerCase();
+// Normalize both the scanned itemId and the CSV-stored item IDs
+const normalizedItemId = (itemId || "").toString().trim().toUpperCase();
 
 const record = inventoryData.find(r => {
   const csvId =
-    (r["Item ID"] ?? r["item_id"] ?? r["ItemID"] ?? r["itemId"] ?? "")
+    (r["item id"] ?? r["Item ID"] ?? r["item_id"] ?? r["ItemID"] ?? r["itemId"] ?? "")
       .toString()
       .trim()
-      .toLowerCase();
+      .toUpperCase();
   return csvId === normalizedItemId;
 });
+
 
 let status = "match";
 let expectedBin = "-";
