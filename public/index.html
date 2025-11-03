@@ -85,6 +85,14 @@
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
+<!-- 📦 CSV Upload Section -->
+<div class="row">
+  <input type="file" id="csvUpload" accept=".csv" class="btn" />
+  <div id="csvInfo">No CSV uploaded yet.</div>
+  <p id="csvTimestamp" style="color:#ccc; margin-top:10px;">Last Updated: (none)</p>
+</div>
+
+
   <div class="row">
     <label for="auditorSelect"><b>Select User:</b></label>
     <select id="auditorSelect" class="btn" style="padding:8px 10px">
@@ -98,16 +106,12 @@
       <option value="__add_new__">+ Add New User</option>
     </select>
 
+
     <div id="currentAuditorDisplay" style="margin-top:8px;font-weight:700;color:#6c47ff">
       Current User: None
     </div>
   </div>
 
-  <div class="row">
-    <input type="file" id="csvUpload" accept=".csv" class="btn" />
-    <div id="csvInfo">No CSV uploaded yet.</div>
-    <p id="csvTimestamp">Last Updated: (none)</p>
-  </div>
 
   <div class="row">
     <button id="scanBinBtn" class="btn">Scan Bin QR</button>

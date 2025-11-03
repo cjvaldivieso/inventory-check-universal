@@ -1,5 +1,16 @@
 const socket = io();
 
+// 🕓 CSV Upload Feedback
+const csvInfo = document.getElementById("csvInfo");
+const csvTimestamp = document.getElementById("csvTimestamp");
+
+// Listen for CSV updates from server (real-time)
+socket.on("csvUpdated", (meta) => {
+  if (csvInfo) csvInfo.textContent = `✅ ${meta.total} records loaded`;
+  if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
+});
+
+
 let currentBin = null;
 const logTbody = document.getElementById("logTbody");
 const csvInfoEl = document.getElementById("csvInfo");
@@ -68,6 +79,16 @@ socket.on("csvUpdated", d=>{
     if(d.timestamp) csvInfoEl.textContent = `📦 CSV Loaded (${d.total}) • Updated: ${d.timestamp}`;
   }catch{}
 })();
+
+const csvInfo = document.getElementById("csvInfo");
+const csvTimestamp = document.getElementById("csvTimestamp");
+
+// Listen for CSV updates from server
+socket.on("csvUpdated", (meta) => {
+  csvInfo.textContent = `✅ ${meta.total} records loaded`;
+  csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
+});
+
 
 // ===== Full-screen camera overlay & scanning =====
 async function startQRScan(type) {
