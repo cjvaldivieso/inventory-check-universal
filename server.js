@@ -7,14 +7,14 @@ import http from "http";
 import { Server } from "socket.io";
 import moment from "moment-timezone";
 
-
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(cors());
 app.use(express.json());
-// Serve static with no-cache for HTML/CSS/JS to avoid stale assets
+
+// Disable caching for static assets (avoid stale UI)
 app.use(express.static("public", {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith(".html") || filePath.endsWith(".js") || filePath.endsWith(".css")) {
@@ -25,26 +25,30 @@ app.use(express.static("public", {
   }
 }));
 
+// --------------------
+// GLOBAL VARIABLES
+// --------------------
 let inventoryData = [];
+let inventoryMap = {};
 let lastCsvTimestamp = null;
-let audits = {}; // { [binId]: { auditor, startTime, endTime, items:[{itemId,expectedBin,scannedBin,status,resolved,ts}] } }
+let audits = {}; // { binId: { auditor, startTime, endTime, items: [...] } }
 
 const upload = multer({ dest: "uploads/" });
 
+// --------------------
+// CSV UPLOAD HANDLER
+// --------------------
 app.post("/upload-csv", upload.single("file"), (req, res) => {
-  // Store upload time in New York timezone (keep this feature)
   const uploadTimeEST = moment().tz("America/New_York").format("MM/DD/YYYY hh:mm A");
-  lastCsvMeta = { uploadedAt: uploadTimeEST };
-
   const rows = [];
+
   fs.createReadStream(req.file.path)
     .pipe(csv())
     .on("data", (d) => {
-      // Normalize keys and values to avoid CSV mismatch
       const normalized = {};
       for (const key in d) {
-        const cleanKey = key.trim().toLowerCase(); // normalize headers
-        normalized[cleanKey] = (d[key] || "").trim(); // normalize cell data
+        const cleanKey = key.trim().toLowerCase();
+        normalized[cleanKey] = (d[key] || "").trim();
       }
       rows.push(normalized);
     })
@@ -54,41 +58,61 @@ app.post("/upload-csv", upload.single("file"), (req, res) => {
       inventoryData = rows;
       inventoryMap = {};
 
-      // Build lookup map with normalized Item IDs (uppercase)
       for (const record of rows) {
         const itemId = (record["item id"] || "").trim().toUpperCase();
         if (itemId) inventoryMap[itemId] = record;
       }
 
       lastCsvTimestamp = uploadTimeEST;
-      io.emit("csvUpdated", { total: rows.length, timestamp: lastCsvTimestamp });
 
-      res.json({
-        message: "CSV uploaded successfully",
+      // 🔔 Emit update to all users
+      io.emit("csvUpdated", {
+        message: "✅ CSV uploaded successfully",
         total: rows.length,
-        time: lastCsvTimestamp,
+        uploadedAt: uploadTimeEST
       });
+
+      // Respond to uploader
+      res.json({
+        message: "✅ CSV uploaded successfully",
+        total: rows.length,
+        uploadedAt: uploadTimeEST
+      });
+    })
+    .on("error", (err) => {
+      console.error("CSV Parse Error:", err);
+      res.status(500).json({ error: "CSV parsing failed" });
     });
 });
 
-
+// --------------------
+// STATUS CHECK
+// --------------------
 app.get("/csv-status", (req, res) => {
-  res.json({ total: inventoryData.length, timestamp: lastCsvTimestamp });
+  res.json({ total: inventoryData.length, uploadedAt: lastCsvTimestamp });
 });
 
+// --------------------
+// AUDIT START
+// --------------------
 app.post("/audit/start/:binId", (req, res) => {
   const { binId } = req.params;
   const auditor = (req.query.auditor || "Unknown").toString();
+
   audits[binId] = {
     auditor,
     startTime: new Date().toISOString(),
     endTime: null,
     items: []
   };
+
   io.emit("auditStarted", { binId, auditor, startTime: audits[binId].startTime });
   res.json({ message: `Audit started for ${binId}`, auditor });
 });
 
+// --------------------
+// ITEM SCAN
+// --------------------
 app.post("/audit/scan", (req, res) => {
   const { binId, itemId } = req.body;
   const auditor = (req.query.auditor || "Unknown").toString();
@@ -98,34 +122,24 @@ app.post("/audit/scan", (req, res) => {
   if (!audits[binId]) return res.status(400).json({ error: "Bin not active. Scan Bin QR first." });
   if (!inventoryData.length) return res.status(400).json({ error: "No CSV loaded" });
 
-// Normalize both the scanned itemId and the CSV-stored item IDs
-const normalizedItemId = (itemId || "").toString().trim().toUpperCase();
+  const normalizedItemId = (itemId || "").trim().toUpperCase();
+  const record = inventoryMap[normalizedItemId];
 
-const record = inventoryData.find(r => {
-  const csvId =
-    (r["item id"] ?? r["Item ID"] ?? r["item_id"] ?? r["ItemID"] ?? r["itemId"] ?? "")
-      .toString()
-      .trim()
-      .toUpperCase();
-  return csvId === normalizedItemId;
-});
+  let status = "match";
+  let expectedBin = "-";
 
-
-let status = "match";
-let expectedBin = "-";
-
-if (!record) {
-  status = "no-bin"; // not found in CSV at all
-} else {
-  expectedBin = (record["Warehouse Bin ID"] || "").toString().trim();
-  if (expectedBin !== binId.toString().trim()) status = "mismatch";
-}
+  if (!record) {
+    status = "no-bin"; // item not in CSV
+  } else {
+    expectedBin = (record["warehouse bin id"] || "").trim();
+    if (expectedBin !== binId.trim()) status = "mismatch";
+  }
 
   const itemRec = {
     itemId,
     expectedBin,
     scannedBin: binId,
-    status,          // "match" | "mismatch" | "no-bin"
+    status, // match | mismatch | no-bin
     resolved: false,
     ts: new Date().toISOString()
   };
@@ -139,14 +153,17 @@ if (!record) {
     record: record ? {
       itemId,
       binId,
-      received: record["Received at Warehouse"] || "",
+      received: record["received at warehouse"] || "",
       statusText: record["status"] || "",
       category: record["category"] || "",
-      subcategory: record["Subcategory"] || ""
+      subcategory: record["subcategory"] || ""
     } : null
   });
 });
 
+// --------------------
+// ITEM RESOLUTION
+// --------------------
 app.post("/audit/resolve", (req, res) => {
   const { binId, itemId, resolved } = req.body;
   if (!binId || !itemId) return res.status(400).json({ error: "Missing binId or itemId" });
@@ -161,28 +178,31 @@ app.post("/audit/resolve", (req, res) => {
   res.json({ message: "Updated", binId, itemId, resolved: !!resolved });
 });
 
+// --------------------
+// END AUDIT
+// --------------------
 app.post("/audit/end/:binId", (req, res) => {
   const { binId } = req.params;
   const audit = audits[binId];
   if (!audit) return res.status(404).json({ error: "No active audit for this bin" });
+
   audit.endTime = new Date().toISOString();
   io.emit("auditEnded", { binId, endTime: audit.endTime, audit });
   res.json({ message: `Audit completed for ${binId}` });
 });
 
-app.get("/audit/summary", (req, res) => {
-  res.json(audits);
-});
-
+// --------------------
+// EXPORT SUMMARY
+// --------------------
 app.get("/export-summary", (req, res) => {
   if (!Object.keys(audits).length) {
     return res.status(400).json({ error: "No audits to export" });
   }
-  const rows = [];
-  rows.push([
-    "Bin ID","Auditor","Status","# Items","Accuracy %","Start Time","End Time",
-    "Item ID","Expected Bin","Scanned Bin","Item Status","Resolved","Scan Timestamp"
-  ]);
+
+  const rows = [
+    ["Bin ID","Auditor","Status","# Items","Accuracy %","Start Time","End Time",
+     "Item ID","Expected Bin","Scanned Bin","Item Status","Resolved","Scan Timestamp"]
+  ];
 
   for (const [binId, audit] of Object.entries(audits)) {
     const total = audit.items.length;
@@ -219,8 +239,10 @@ app.get("/export-summary", (req, res) => {
   res.send(csvContent);
 });
 
+// --------------------
+// SERVER START
+// --------------------
 io.on("connection", () => {});
-
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+server.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 

@@ -81,42 +81,41 @@
 </head>
 <body>
   <header>
-    <img src="icons/shappi-inventory.png" alt="Shappi Logo" onerror="this.style.display='none'">
+    <img src="icons/shappi-inventory.png" alt="Shappi Logo"
+         onerror="this.src='shappi-inventory.png'">
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
-<!-- 📦 CSV Upload Section -->
-<div class="row">
-  <input type="file" id="csvUpload" accept=".csv" class="btn" />
-  <div id="csvInfo">No CSV uploaded yet.</div>
-  <p id="csvTimestamp" style="color:#ccc; margin-top:10px;">Last Updated: (none)</p>
-</div>
+  <!-- CSV FIRST -->
+  <div class="row">
+    <input type="file" id="csvUpload" accept=".csv" class="btn" />
+    <div id="csvInfo">No CSV uploaded yet.</div>
+    <p id="csvTimestamp" style="color:#bdbde6; margin-top:8px;">Last Updated: (none)</p>
+  </div>
 
-
+  <!-- Select User -->
   <div class="row">
     <label for="auditorSelect"><b>Select User:</b></label>
     <select id="auditorSelect" class="btn" style="padding:8px 10px">
       <option value="">-- Choose Your Name --</option>
-      <option value="Anslee">Anslee</option>
-      <option value="Caz">Caz</option>
-      <option value="CJ">CJ</option>
-      <option value="Eric">Eric</option>
-      <option value="Greg">Greg</option>
-      <option value="Justin">Justin</option>
+      <option>Anslee</option>
+      <option>Caz</option>
+      <option>CJ</option>
+      <option>Eric</option>
+      <option>Greg</option>
+      <option>Justin</option>
       <option value="__add_new__">+ Add New User</option>
     </select>
-
-
     <div id="currentAuditorDisplay" style="margin-top:8px;font-weight:700;color:#6c47ff">
-      Current User: None
+      Current User: <span id="currentAuditor">None</span>
     </div>
   </div>
 
-
+  <!-- Controls -->
   <div class="row">
-    <button id="scanBinBtn" class="btn">Scan Bin QR</button>
-    <button id="scanItemBtn" class="btn">Scan Item QR (Continuous)</button>
-    <button id="endBinBtn" class="btn">End Bin Audit</button>
+    <button id="scanBinBtn"   class="btn">Scan Bin QR</button>
+    <button id="scanItemBtn"  class="btn">Scan Item QR (Continuous)</button>
+    <button id="endBinBtn"    class="btn">End Bin Audit</button>
     <button id="exportLogBtn" class="btn">Export On-Screen Results</button>
     <button id="exportSummaryBtn" class="btn">Download Full Audit CSV</button>
   </div>
@@ -136,7 +135,7 @@
           <th>Shappi Status</th>
           <th>Category</th>
           <th>Subcategory</th>
-          <th>Audit Status</th>
+          <th>Audit Status</th>   <!-- 👈 renamed -->
           <th>Resolved</th>
         </tr>
       </thead>
@@ -144,20 +143,29 @@
     </table>
   </div>
 
+  <!-- little toast for confirmations -->
+  <div id="toast" style="
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      background: #1e293b; color: #fff; border: 1px solid #6c47ff;
+      padding: 10px 14px; border-radius: 10px; display: none; z-index: 99999;">
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+
+  <!-- Service worker with cache-bust -->
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         try {
-          const reg = await navigator.serviceWorker.register("/service-worker.js");
+          const reg = await navigator.serviceWorker.register("/service-worker.js?v=5");
           reg.update();
-        } catch (e) {
-          console.log("Service Worker registration failed", e);
-        }
+        } catch (e) { console.log("SW registration failed", e); }
       });
     }
   </script>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
 

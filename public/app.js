@@ -1,96 +1,115 @@
 const socket = io();
 
-// 🕓 CSV Upload Feedback
+// === CSV Upload + Live Timestamp ===
 const csvInfo = document.getElementById("csvInfo");
 const csvTimestamp = document.getElementById("csvTimestamp");
+const csvUpload = document.getElementById("csvUpload");
 
-// Listen for CSV updates from server (real-time)
+// Toast element (defined in index.html)
+const toast = document.getElementById("toast");
+function showToast(msg, color = "#6c47ff") {
+  if (!toast) return;
+  toast.textContent = msg;
+  toast.style.background = color;
+  toast.style.display = "block";
+  setTimeout(() => (toast.style.display = "none"), 2500);
+}
+
+// Socket event: when *anyone* uploads a CSV
 socket.on("csvUpdated", (meta) => {
   if (csvInfo) csvInfo.textContent = `✅ ${meta.total} records loaded`;
   if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
+  showToast("✅ CSV uploaded and synced");
 });
 
+// Local upload: when *you* upload CSV
+if (csvUpload) {
+  csvUpload.addEventListener("change", async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
 
-let currentBin = null;
-const logTbody = document.getElementById("logTbody");
-const csvInfoEl = document.getElementById("csvInfo");
+    const fd = new FormData();
+    fd.append("file", file);
+
+    try {
+      const res = await fetch("/upload-csv", { method: "POST", body: fd });
+      const data = await res.json();
+
+      if (csvInfo) csvInfo.textContent = `✅ ${data.total} records loaded`;
+      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${data.uploadedAt}`;
+      showToast("✅ CSV uploaded successfully");
+    } catch (err) {
+      console.error("CSV upload failed", err);
+      showToast("❌ CSV upload failed", "#e63946");
+    }
+  });
+}
+
+// Load CSV status when page opens
+(async () => {
+  try {
+    const r = await fetch("/csv-status");
+    const d = await r.json();
+    if (d.uploadedAt && csvTimestamp)
+      csvTimestamp.textContent = `Last Updated: ${d.uploadedAt}`;
+    if (d.total && csvInfo)
+      csvInfo.textContent = `✅ ${d.total} records loaded`;
+  } catch (err) {
+    console.error("Failed to load CSV status:", err);
+  }
+})();
+
+// === Auditor Selector ===
 const auditorSelect = document.getElementById("auditorSelect");
 const auditorDisplay = document.getElementById("currentAuditorDisplay");
 
-// ===== Auditor selector =====
-function setAuditor(name){
-  if(!name) return;
+function setAuditor(name) {
+  if (!name) return;
   localStorage.setItem("auditorName", name);
-  auditorDisplay.textContent = `Current Auditor: ${name}`;
+  auditorDisplay.innerHTML = `Current User: <span id="currentAuditor">${name}</span>`;
 }
-function loadAuditor(){
+
+function loadAuditor() {
   const saved = localStorage.getItem("auditorName");
-  if(saved){
-    let opt = Array.from(auditorSelect.options).find(o=>o.value===saved);
-    if(!opt){
-      const newOpt=document.createElement("option");
-      newOpt.value=saved; newOpt.textContent=saved;
+  if (saved) {
+    let opt = Array.from(auditorSelect.options).find((o) => o.value === saved);
+    if (!opt) {
+      const newOpt = document.createElement("option");
+      newOpt.value = saved;
+      newOpt.textContent = saved;
       auditorSelect.insertBefore(newOpt, auditorSelect.lastElementChild);
     }
     auditorSelect.value = saved;
     setAuditor(saved);
   }
 }
-auditorSelect.addEventListener("change", ()=>{
+
+auditorSelect.addEventListener("change", () => {
   const v = auditorSelect.value;
-  if(v==="__add_new__"){
-    const nn = prompt("Enter new auditor name:");
-    if(nn){
-      const o=document.createElement("option");
-      o.value=nn; o.textContent=nn;
+  if (v === "__add_new__") {
+    const nn = prompt("Enter new user name:");
+    if (nn) {
+      const o = document.createElement("option");
+      o.value = nn;
+      o.textContent = nn;
       auditorSelect.insertBefore(o, auditorSelect.lastElementChild);
-      auditorSelect.value=nn;
+      auditorSelect.value = nn;
       setAuditor(nn);
-    }else{
+    } else {
       auditorSelect.value = localStorage.getItem("auditorName") || "";
     }
-  }else{
+  } else {
     setAuditor(v);
   }
 });
+
 loadAuditor();
 
-// ===== CSV upload & status =====
-document.getElementById("csvUpload").addEventListener("change", async (e)=>{
-  const file=e.target.files[0];
-  if(!file) return;
-  const fd=new FormData(); fd.append("file", file);
-  const res=await fetch("/upload-csv", {method:"POST", body:fd});
-  const data=await res.json();
-const ts = document.getElementById("csvTimestamp");
-if (ts && data.uploadedAt) {
-  ts.textContent = `Last Updated: ${data.uploadedAt}`;
-}
+// === Audit & Scanning Logic ===
+let currentBin = null;
+const logTbody = document.getElementById("logTbody");
 
-  csvInfoEl.textContent = `📦 CSV Loaded (${data.total}) • Updated: ${data.timestamp}`;
-  alert(`CSV uploaded (${data.total} records)`);
-});
-socket.on("csvUpdated", d=>{
-  csvInfoEl.textContent = `📦 CSV Loaded (${d.total}) • Updated: ${d.timestamp}`;
-});
-(async ()=>{
-  try{
-    const r=await fetch("/csv-status"); const d=await r.json();
-    if(d.timestamp) csvInfoEl.textContent = `📦 CSV Loaded (${d.total}) • Updated: ${d.timestamp}`;
-  }catch{}
-})();
-
-const csvInfo = document.getElementById("csvInfo");
-const csvTimestamp = document.getElementById("csvTimestamp");
-
-// Listen for CSV updates from server
-socket.on("csvUpdated", (meta) => {
-  csvInfo.textContent = `✅ ${meta.total} records loaded`;
-  csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
-});
-
-
-// ===== Full-screen camera overlay & scanning =====
+// Camera scan overlay
 async function startQRScan(type) {
   console.log("Starting QR scan:", type);
 
@@ -123,15 +142,18 @@ async function startQRScan(type) {
   overlay.appendChild(stopBtn);
 
   let stopRequested = false;
-  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "environment" },
+  });
   video.srcObject = stream;
   await video.play();
 
   stopBtn.onclick = () => {
     stopRequested = true;
-    try { stream.getTracks().forEach(t => t.stop()); } catch {}
+    try {
+      stream.getTracks().forEach((t) => t.stop());
+    } catch {}
     overlay.remove();
-    console.log("Scanning stopped manually");
   };
 
   const canvas = document.createElement("canvas");
@@ -145,10 +167,14 @@ async function startQRScan(type) {
       canvas.height = video.videoHeight;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+      const code = jsQR(imageData.data, imageData.width, imageData.height, {
+        inversionAttempts: "dontInvert",
+      });
 
       if (code && code.data) {
-        try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        try {
+          stream.getTracks().forEach((t) => t.stop());
+        } catch {}
         overlay.remove();
         handleScanResult(type, code.data.trim());
         return;
@@ -160,31 +186,49 @@ async function startQRScan(type) {
   tick();
 }
 
+async function handleScanResult(type, code) {
+  const auditor = localStorage.getItem("auditorName") || "Unknown";
 
-async function handleItemScan(itemId, auditor){
-  try{
-    const r = await fetch("/audit/scan?auditor="+encodeURIComponent(auditor), {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ binId: currentBin, itemId })
+  if (type === "bin") {
+    currentBin = code;
+    document.getElementById("currentBin").textContent = code;
+    await fetch(`/audit/start/${encodeURIComponent(code)}?auditor=${encodeURIComponent(auditor)}`, {
+      method: "POST",
+    });
+    showToast(`📦 Bin ${code} ready for scanning`);
+  } else if (type === "item") {
+    if (!currentBin) {
+      alert("Scan a Bin QR first.");
+      return;
+    }
+    handleItemScan(code, auditor);
+  }
+}
+
+async function handleItemScan(itemId, auditor) {
+  try {
+    const r = await fetch(`/audit/scan?auditor=${encodeURIComponent(auditor)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ binId: currentBin, itemId }),
     });
     const data = await r.json();
-    const tr=document.createElement("tr");
 
-let label = "", cls = "";
-if (data.status === "match") {
-  label = "✅ Correct Bin"; cls = "green";
-} else if (data.status === "mismatch") {
-  label = `⚠️ Wrong Bin → Move to ${data.correctBin || "Unknown"}`; cls = "yellow";
-  alert(`⚠️ Item ${itemId} belongs in ${data.correctBin}. Please move it.`);
-} else if (data.status === "no-bin") {
-  label = "🚫 No Bin (not in CSV)"; cls = "red";
-  alert(`⚠️ Item ${itemId} is NOT in the CSV (not registered).`);
-} else if (data.status === "missing") {
-  label = "❌ Missing (no bin assigned in CSV)"; cls = "grey";
-} else {
-  label = data.status || "Unknown"; cls = "grey";
-}
+    const tr = document.createElement("tr");
+    let label = "",
+      cls = "";
+    if (data.status === "match") {
+      label = "✅ Correct Bin";
+      cls = "green";
+    } else if (data.status === "mismatch") {
+      label = `⚠️ Wrong Bin → Move to ${data.correctBin || "Unknown"}`;
+      cls = "yellow";
+      showToast(`⚠️ Item ${itemId} belongs in ${data.correctBin}`, "#ffb703");
+    } else if (data.status === "no-bin") {
+      label = "🚫 No Bin (not in CSV)";
+      cls = "red";
+      showToast(`🚫 Item ${itemId} not in CSV`, "#e63946");
+    }
 
     const expected = data.correctBin || "-";
     const rec = data.record || {};
@@ -199,74 +243,86 @@ if (data.status === "match") {
       <td>${rec.subcategory || "-"}</td>
       <td><span class="status-pill ${cls}">${label}</span></td>
       <td>
-        ${data.status==="mismatch"
-          ? `<label style="cursor:pointer;">
-               <input type="checkbox" data-bin="${currentBin}" data-item="${itemId}" class="resolveToggle"> Resolved
-             </label>`
-          : "-"
+        ${
+          data.status === "mismatch"
+            ? `<label style="cursor:pointer;">
+                 <input type="checkbox" data-bin="${currentBin}" data-item="${itemId}" class="resolveToggle">
+               </label>`
+            : "-"
         }
       </td>
     `;
     logTbody.prepend(tr);
-  }catch(err){
+  } catch (err) {
     console.error(err);
     alert("Scan error.");
   }
 }
 
-logTbody.addEventListener("change", async (e)=>{
+logTbody.addEventListener("change", async (e) => {
   const el = e.target;
-  if(!el.classList.contains("resolveToggle")) return;
+  if (!el.classList.contains("resolveToggle")) return;
   const binId = el.getAttribute("data-bin");
   const itemId = el.getAttribute("data-item");
   const resolved = !!el.checked;
 
-  try{
+  try {
     await fetch("/audit/resolve", {
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({ binId, itemId, resolved })
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ binId, itemId, resolved }),
     });
-  }catch(err){
+  } catch (err) {
     console.error("Resolve update failed", err);
-    alert("Failed to update resolve state.");
   }
 });
 
-socket.on("itemResolved", ({binId,itemId,resolved})=>{
-  const cb = logTbody.querySelector(`input.resolveToggle[data-bin="${binId}"][data-item="${itemId}"]`);
-  if(cb) cb.checked = !!resolved;
+socket.on("itemResolved", ({ binId, itemId, resolved }) => {
+  const cb = logTbody.querySelector(
+    `input.resolveToggle[data-bin="${binId}"][data-item="${itemId}"]`
+  );
+  if (cb) cb.checked = !!resolved;
 });
 
 // Buttons
 document.getElementById("scanBinBtn").onclick = () => startQRScan("bin");
 document.getElementById("scanItemBtn").onclick = () => startQRScan("item");
-document.getElementById("endBinBtn").onclick = async ()=>{
-  if(!currentBin){ alert("No active bin. Scan a Bin QR first."); return; }
-  await fetch(`/audit/end/${encodeURIComponent(currentBin)}`, {method:"POST"});
-  alert(`✅ Audit ended for Bin: ${currentBin}`);
+document.getElementById("endBinBtn").onclick = async () => {
+  if (!currentBin) {
+    alert("No active bin. Scan a Bin QR first.");
+    return;
+  }
+  await fetch(`/audit/end/${encodeURIComponent(currentBin)}`, { method: "POST" });
+  showToast(`✅ Audit ended for Bin ${currentBin}`);
   currentBin = null;
   document.getElementById("currentBin").textContent = "None";
 };
 
 // Export on-screen results
-document.getElementById("exportLogBtn").onclick = ()=>{
-  const rows=[["Item ID","Expected Bin","Scanned Bin","WH Received","Shappi Status","Category","Subcategory","Status","Resolved"]];
-  logTbody.querySelectorAll("tr").forEach(tr=>{
-    const cols=Array.from(tr.querySelectorAll("td")).map(td=>td.textContent.trim());
+document.getElementById("exportLogBtn").onclick = () => {
+  const rows = [
+    ["Item ID", "Expected Bin", "Scanned Bin", "WH Received", "Shappi Status", "Category", "Subcategory", "Audit Status", "Resolved"],
+  ];
+  logTbody.querySelectorAll("tr").forEach((tr) => {
+    const cols = Array.from(tr.querySelectorAll("td")).map((td) => td.textContent.trim());
     rows.push(cols);
   });
-  const csv = rows.map(r=>r.map(v=>{
-    const s=(v??"").toString(); return s.includes(",")||s.includes("\n")?`"${s.replace(/"/g,'""')}"`:s;
-  }).join(",")).join("\n");
-  const blob=new Blob([csv],{type:"text/csv"});
-  const url=URL.createObjectURL(blob);
-  const a=document.createElement("a");
-  a.href=url; a.download="audit_results.csv"; a.click();
+  const csv = rows.map((r) =>
+    r.map((v) => {
+      const s = (v ?? "").toString();
+      return s.includes(",") || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(",")
+  ).join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "audit_results.csv";
+  a.click();
 };
 
 // Export full server-side summary
-document.getElementById("exportSummaryBtn").onclick = ()=>{
+document.getElementById("exportSummaryBtn").onclick = () => {
   window.location.href = "/export-summary";
 };
 
