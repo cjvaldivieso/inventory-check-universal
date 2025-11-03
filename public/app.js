@@ -51,6 +51,11 @@ document.getElementById("csvUpload").addEventListener("change", async (e)=>{
   const fd=new FormData(); fd.append("file", file);
   const res=await fetch("/upload-csv", {method:"POST", body:fd});
   const data=await res.json();
+const ts = document.getElementById("csvTimestamp");
+if (ts && data.uploadedAt) {
+  ts.textContent = `Last Updated: ${data.uploadedAt}`;
+}
+
   csvInfoEl.textContent = `📦 CSV Loaded (${data.total}) • Updated: ${data.timestamp}`;
   alert(`CSV uploaded (${data.total} records)`);
 });
@@ -65,62 +70,75 @@ socket.on("csvUpdated", d=>{
 })();
 
 // ===== Full-screen camera overlay & scanning =====
-async function startQRScan(mode){
-  const auditor = localStorage.getItem("auditorName") || "Unknown";
+async function startQRScan(type) {
+  console.log("Starting QR scan:", type);
 
-  const overlay=document.createElement("div");
-  overlay.className="overlay";
-
-  const video=document.createElement("video");
-  overlay.appendChild(video);
+  const overlay = document.createElement("div");
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.background = "rgba(0,0,0,0.85)";
+  overlay.style.display = "flex";
+  overlay.style.flexDirection = "column";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+  overlay.style.zIndex = "9999";
   document.body.appendChild(overlay);
 
-  let lastValue=null, lastAt=0;
+  const video = document.createElement("video");
+  video.style.width = "92vw";
+  video.style.maxWidth = "640px";
+  video.style.borderRadius = "12px";
+  overlay.appendChild(video);
 
-  try{
-    const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-    video.srcObject=stream;
-    await video.play();
+  const stopBtn = document.createElement("button");
+  stopBtn.textContent = "🛑 Stop Scanning";
+  stopBtn.style.marginTop = "16px";
+  stopBtn.style.background = "#ff5555";
+  stopBtn.style.color = "#fff";
+  stopBtn.style.border = "none";
+  stopBtn.style.padding = "10px 20px";
+  stopBtn.style.borderRadius = "10px";
+  stopBtn.style.fontWeight = "600";
+  overlay.appendChild(stopBtn);
 
-    const canvas=document.createElement("canvas");
-    const ctx=canvas.getContext("2d");
+  let stopRequested = false;
+  const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+  video.srcObject = stream;
+  await video.play();
 
-    const loop = async ()=>{
-      if(video.readyState===video.HAVE_ENOUGH_DATA){
-        canvas.width=video.videoWidth; canvas.height=video.videoHeight;
-        ctx.drawImage(video,0,0,canvas.width,canvas.height);
-        const img=ctx.getImageData(0,0,canvas.width,canvas.height);
-        const code=jsQR(img.data,img.width,img.height,{inversionAttempts:"dontInvert"});
-        if(code){
-          const val=code.data.trim();
-          const now=Date.now();
-          if(val===lastValue && (now-lastAt)<1500){ requestAnimationFrame(loop); return; }
-          lastValue=val; lastAt=now;
-
-          if(mode==="bin"){
-            stream.getTracks().forEach(t=>t.stop()); overlay.remove();
-            currentBin = val;
-            document.getElementById("currentBin").textContent = currentBin;
-            await fetch(`/audit/start/${encodeURIComponent(currentBin)}?auditor=${encodeURIComponent(auditor)}`, {method:"POST"});
-            alert(`✅ Audit started for Bin: ${currentBin}`);
-            return;
-          }else{
-            if(!currentBin){ alert("Scan a Bin QR first!"); }
-            else{
-              await handleItemScan(val, auditor);
-            }
-          }
-        }
-      }
-      requestAnimationFrame(loop);
-    };
-    loop();
-  }catch(err){
-    console.error("Camera error:", err);
-    alert("Camera access denied or unavailable.");
+  stopBtn.onclick = () => {
+    stopRequested = true;
+    try { stream.getTracks().forEach(t => t.stop()); } catch {}
     overlay.remove();
-  }
+    console.log("Scanning stopped manually");
+  };
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  const tick = async () => {
+    if (stopRequested) return;
+
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+
+      if (code && code.data) {
+        try { stream.getTracks().forEach(t => t.stop()); } catch {}
+        overlay.remove();
+        handleScanResult(type, code.data.trim());
+        return;
+      }
+    }
+    requestAnimationFrame(tick);
+  };
+
+  tick();
 }
+
 
 async function handleItemScan(itemId, auditor){
   try{

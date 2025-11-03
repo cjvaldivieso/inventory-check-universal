@@ -5,6 +5,8 @@ import fs from "fs";
 import cors from "cors";
 import http from "http";
 import { Server } from "socket.io";
+import moment from "moment-timezone";
+
 
 const app = express();
 const server = http.createServer(app);
@@ -30,7 +32,10 @@ let audits = {}; // { [binId]: { auditor, startTime, endTime, items:[{itemId,exp
 const upload = multer({ dest: "uploads/" });
 
 app.post("/upload-csv", upload.single("file"), (req, res) => {
-  const rows = [];
+// Store upload time in New York timezone
+const uploadTimeEST = moment().tz("America/New_York").format("MM/DD/YYYY hh:mm A z");
+lastCsvMeta = { uploadedAt: uploadTimeEST };
+
   fs.createReadStream(req.file.path)
     .pipe(csv())
     .on("data", d => rows.push(d))
@@ -69,26 +74,25 @@ app.post("/audit/scan", (req, res) => {
   if (!audits[binId]) return res.status(400).json({ error: "Bin not active. Scan Bin QR first." });
   if (!inventoryData.length) return res.status(400).json({ error: "No CSV loaded" });
 
-  const record = inventoryData.find(r => (r["Item ID"] || "").trim() === itemId.trim());
-  let status = "match";
-  let expectedBin = "-";
+const normalizedItemId = (itemId || "").toString().trim().toLowerCase();
+
+const record = inventoryData.find(r => {
+  const csvId =
+    (r["Item ID"] ?? r["item_id"] ?? r["ItemID"] ?? r["itemId"] ?? "")
+      .toString()
+      .trim()
+      .toLowerCase();
+  return csvId === normalizedItemId;
+});
+
+let status = "match";
+let expectedBin = "-";
 
 if (!record) {
-  // Item not found anywhere in the CSV
-  status = "no-bin";
+  status = "no-bin"; // not found in CSV at all
 } else {
-  expectedBin = (record["Warehouse Bin ID"] || "").trim();
-
-  if (!expectedBin) {
-    // Item exists in CSV but has no assigned bin
-    status = "missing";
-  } else if (expectedBin === binId.trim()) {
-    // Correct bin match
-    status = "match";
-  } else {
-    // Item belongs in another bin
-    status = "mismatch";
-  }
+  expectedBin = (record["Warehouse Bin ID"] || "").toString().trim();
+  if (expectedBin !== binId.toString().trim()) status = "mismatch";
 }
 
   const itemRec = {

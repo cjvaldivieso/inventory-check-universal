@@ -3,38 +3,90 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shappi Inventory Audit</title>
+  <title>Shappi Inventory App</title>
   <link rel="manifest" href="manifest.json" />
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+
   <style>
-    body{font-family:Helvetica,Arial,sans-serif;background:#0B0C2A;color:#fff;margin:0;text-align:center}
-    header img{height:60px;margin:14px auto 4px;display:block}
-    h2{margin:6px 0 12px}
-    .row{margin:10px auto;max-width:900px}
-    .btn{background:#6c47ff;border:none;color:#fff;border-radius:10px;padding:10px 16px;margin:6px;cursor:pointer;font-size:15px}
-    .btn:hover{background:#5633d1}
-    table{margin:16px auto;border-collapse:collapse;width:95%;max-width:980px}
-    th,td{border:1px solid #3b3e7a;padding:8px;font-size:14px}
-    th{background:#2c2f6c}
-    #csvInfo{color:#bdbde6;font-size:13px;margin-top:6px}
-    .status-pill{display:inline-block;border-radius:8px;padding:2px 8px;font-weight:600}
-    .green{background:#28a745}
-    .yellow{background:#ffc107;color:#000}
-    .red{background:#dc3545}
-    .grey{background:#6c757d}
-    .overlay{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;align-items:center;justify-content:center}
-    .overlay video{width:92%;max-width:700px;border-radius:12px}
+    body {
+      font-family: Helvetica, Arial, sans-serif;
+      background: #0B0C2A;
+      color: #fff;
+      margin: 0;
+      text-align: center;
+      padding: 0;
+    }
+
+    header img {
+      height: 64px;
+      margin: 16px auto 4px;
+      display: block;
+    }
+
+    h2 {
+      color: #6c47ff;
+      margin-bottom: 8px;
+    }
+
+    .row {
+      margin: 10px auto;
+      max-width: 900px;
+    }
+
+    .btn {
+      background: #6c47ff;
+      border: none;
+      color: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      margin: 4px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+
+    .btn:hover {
+      background: #5633d1;
+    }
+
+    table {
+      margin: 16px auto;
+      border-collapse: collapse;
+      width: 95%;
+      max-width: 980px;
+    }
+
+    th, td {
+      border: 1px solid #3b3e7a;
+      padding: 8px;
+      font-size: 14px;
+    }
+
+    th {
+      background: #2c2f6c;
+    }
+
+    #csvTimestamp {
+      color: #6c47ff;
+      font-weight: 500;
+      margin-top: 8px;
+    }
+
+    #csvInfo {
+      color: #bdbde6;
+      font-size: 13px;
+      margin-top: 6px;
+    }
   </style>
 </head>
 <body>
   <header>
-    <img src="icons/shappi-inventory.png" alt="Shappi Logo" onerror="this.src='shappi-inventory.png'">
-    <h2>📦 Shappi Inventory Audit</h2>
+    <img src="icons/shappi-inventory.png" alt="Shappi Logo" onerror="this.style.display='none'">
+    <h2>📦 Shappi Inventory App</h2>
   </header>
 
   <div class="row">
-    <label for="auditorSelect"><b>Select Auditor:</b></label>
+    <label for="auditorSelect"><b>Select User:</b></label>
     <select id="auditorSelect" class="btn" style="padding:8px 10px">
       <option value="">-- Choose Your Name --</option>
       <option value="Anslee">Anslee</option>
@@ -43,14 +95,18 @@
       <option value="Eric">Eric</option>
       <option value="Greg">Greg</option>
       <option value="Justin">Justin</option>
-      <option value="__add_new__">+ Add New Auditor</option>
+      <option value="__add_new__">+ Add New User</option>
     </select>
-    <div id="currentAuditorDisplay" style="margin-top:8px;font-weight:700;color:#6c47ff">Current Auditor: None</div>
+
+    <div id="currentAuditorDisplay" style="margin-top:8px;font-weight:700;color:#6c47ff">
+      Current User: None
+    </div>
   </div>
 
   <div class="row">
     <input type="file" id="csvUpload" accept=".csv" class="btn" />
     <div id="csvInfo">No CSV uploaded yet.</div>
+    <p id="csvTimestamp">Last Updated: (none)</p>
   </div>
 
   <div class="row">
@@ -61,7 +117,9 @@
     <button id="exportSummaryBtn" class="btn">Download Full Audit CSV</button>
   </div>
 
-  <div class="row" style="font-weight:700">Current Bin: <span id="currentBin">None</span></div>
+  <div class="row" style="font-weight:700">
+    Current Bin: <span id="currentBin">None</span>
+  </div>
 
   <div class="row">
     <table>
@@ -74,7 +132,7 @@
           <th>Shappi Status</th>
           <th>Category</th>
           <th>Subcategory</th>
-          <th>Status</th>
+          <th>Audit Status</th>
           <th>Resolved</th>
         </tr>
       </thead>
@@ -82,19 +140,18 @@
     </table>
   </div>
 
-<script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", async () => {
-      try {
-        const reg = await navigator.serviceWorker.register("/service-worker.js", { scope: "/" });
-        // Ask SW to update immediately
-        reg.update();
-      } catch (e) {
-        console.log("SW registration failed", e);
-      }
-    });
-  }
-</script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", async () => {
+        try {
+          const reg = await navigator.serviceWorker.register("/service-worker.js");
+          reg.update();
+        } catch (e) {
+          console.log("Service Worker registration failed", e);
+        }
+      });
+    }
+  </script>
 
   <script src="app.js"></script>
 </body>
