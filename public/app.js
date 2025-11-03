@@ -132,19 +132,20 @@ async function handleItemScan(itemId, auditor){
     const data = await r.json();
     const tr=document.createElement("tr");
 
-    let label="", cls="";
-    if(data.status==="match"){
-      label="✅ Correct Bin"; cls="green";
-    }else if(data.status==="mismatch"){
-      label = `⚠️ Wrong Bin → Move to ${data.correctBin || "Unknown"}`;
-      cls="yellow";
-      alert(`⚠️ Item ${itemId} belongs in ${data.correctBin}. Please move it.`);
-    }else if(data.status==="no-bin"){
-      label="❌ No Bin"; cls="red";
-      alert(`⚠️ Item ${itemId} not found in CSV (no assigned bin).`);
-    }else{
-      label=data.status||"Unknown"; cls="grey";
-    }
+let label = "", cls = "";
+if (data.status === "match") {
+  label = "✅ Correct Bin"; cls = "green";
+} else if (data.status === "mismatch") {
+  label = `⚠️ Wrong Bin → Move to ${data.correctBin || "Unknown"}`; cls = "yellow";
+  alert(`⚠️ Item ${itemId} belongs in ${data.correctBin}. Please move it.`);
+} else if (data.status === "no-bin") {
+  label = "🚫 No Bin (not in CSV)"; cls = "red";
+  alert(`⚠️ Item ${itemId} is NOT in the CSV (not registered).`);
+} else if (data.status === "missing") {
+  label = "❌ Missing (no bin assigned in CSV)"; cls = "grey";
+} else {
+  label = data.status || "Unknown"; cls = "grey";
+}
 
     const expected = data.correctBin || "-";
     const rec = data.record || {};

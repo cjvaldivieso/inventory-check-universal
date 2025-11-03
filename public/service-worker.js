@@ -1,57 +1,70 @@
-const CACHE_NAME = "shappi-inventory-cache-v1";
-const urlsToCache = [
-  "/",
-  "/index.html",
-  "/app.js",
-  "/styles.css",
-  "/manifest.json",
-  "/icons/shappi-logo-96.png",
-  "/icons/shappi-logo-192.png",
-  "/icons/shappi-logo-512.png"
-];
+// --- VERSION THIS WHEN YOU DEPLOY ---
+const CACHE_VERSION = "shappi-cache-v5"; // bump v# on every deploy
+const RUNTIME = CACHE_VERSION;
 
-// ✅ Install Service Worker
 self.addEventListener("install", (event) => {
-  console.log("📦 Service Worker installing...");
-  event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => {
-      console.log("Caching app files...");
-      return cache.addAll(urlsToCache);
-    })
-  );
+  self.skipWaiting(); // activate immediately
+  event.waitUntil((async () => {
+    const cache = await caches.open(RUNTIME);
+    // Pre-cache the app shell only if you want; keep minimal
+    await cache.addAll([
+      "/",           // index.html
+      "/app.js",
+      "/manifest.json",
+      "/icons/shappi-inventory.png"
+    ]);
+  })());
 });
 
-// ✅ Activate Service Worker
 self.addEventListener("activate", (event) => {
-  console.log("✅ Service Worker activated");
-  event.waitUntil(
-    caches.keys().then((cacheNames) =>
-      Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) {
-            console.log("Deleting old cache:", cache);
-            return caches.delete(cache);
-          }
-        })
-      )
-    )
-  );
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(
+      keys
+        .filter((key) => key !== RUNTIME)
+        .map((key) => caches.delete(key))
+    );
+    await self.clients.claim(); // take control immediately
+  })());
 });
 
-// ✅ Fetch Interception for Offline Mode
+// Network-first for HTML/JS to avoid stale builds
 self.addEventListener("fetch", (event) => {
-  event.respondWith(
-    caches.match(event.request).then((cachedResponse) => {
-      return (
-        cachedResponse ||
-        fetch(event.request).catch(() => {
-          return new Response("⚠️ Offline: Resource unavailable.", {
-            status: 503,
-            headers: { "Content-Type": "text/plain" }
-          });
-        })
-      );
-    })
-  );
+  const req = event.request;
+  const url = new URL(req.url);
+
+  // Only handle same-origin requests
+  if (url.origin !== self.location.origin) return;
+
+  // Network-first for HTML/JS/CSS
+  if (req.destination === "document" || req.url.endsWith(".js") || req.url.endsWith(".css")) {
+    event.respondWith((async () => {
+      try {
+        const fresh = await fetch(req, { cache: "no-store" });
+        return fresh;
+      } catch (e) {
+        const cache = await caches.open(RUNTIME);
+        const cached = await cache.match(req);
+        return cached || caches.match("/");
+      }
+    })());
+    return;
+  }
+
+  // Cache-first for images/icons
+  if (req.destination === "image") {
+    event.respondWith((async () => {
+      const cache = await caches.open(RUNTIME);
+      const cached = await cache.match(req);
+      if (cached) return cached;
+      const fresh = await fetch(req);
+      cache.put(req, fresh.clone());
+      return fresh;
+    })());
+    return;
+  }
+
+  // Default: go to network
+  event.respondWith(fetch(req));
 });
 

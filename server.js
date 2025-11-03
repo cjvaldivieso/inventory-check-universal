@@ -12,7 +12,16 @@ const io = new Server(server);
 
 app.use(cors());
 app.use(express.json());
-app.use(express.static("public"));
+// Serve static with no-cache for HTML/CSS/JS to avoid stale assets
+app.use(express.static("public", {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith(".html") || filePath.endsWith(".js") || filePath.endsWith(".css")) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    }
+  }
+}));
 
 let inventoryData = [];
 let lastCsvTimestamp = null;
@@ -64,12 +73,23 @@ app.post("/audit/scan", (req, res) => {
   let status = "match";
   let expectedBin = "-";
 
-  if (!record) {
-    status = "no-bin";
+if (!record) {
+  // Item not found anywhere in the CSV
+  status = "no-bin";
+} else {
+  expectedBin = (record["Warehouse Bin ID"] || "").trim();
+
+  if (!expectedBin) {
+    // Item exists in CSV but has no assigned bin
+    status = "missing";
+  } else if (expectedBin === binId.trim()) {
+    // Correct bin match
+    status = "match";
   } else {
-    expectedBin = (record["Warehouse Bin ID"] || "").trim();
-    if (expectedBin !== binId.trim()) status = "mismatch";
+    // Item belongs in another bin
+    status = "mismatch";
   }
+}
 
   const itemRec = {
     itemId,
