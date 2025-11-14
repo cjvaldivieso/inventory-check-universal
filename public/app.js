@@ -1,4 +1,4 @@
-/* public/app.js — Shappi Inventory App (hands-free scanning) */
+k/* public/app.js — Shappi Inventory App (hands-free scanning) */
 
 // ----- Socket & CSV UI wiring -----
 const socket = io();
@@ -6,14 +6,14 @@ const csvInfo      = document.getElementById("csvInfo");
 const csvTimestamp = document.getElementById("csvTimestamp");
 const csvUpload    = document.getElementById("csvUpload");
 
-// Live CSV updates from server (after any upload by anyone)
+// Live CSV updates from server
 socket.on("csvUpdated", (meta) => {
   if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${meta.total})`;
   if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
   toast(`CSV updated • ${meta.total} items`, "info");
 });
 
-// Poll server once on load (in case CSV was uploaded earlier)
+// Poll server once on load
 (async () => {
   try {
     const r = await fetch("/csv-status");
@@ -22,10 +22,10 @@ socket.on("csvUpdated", (meta) => {
       if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${d.total})`;
       if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${d.timestamp || "(none)"}`;
     }
-  } catch { /* ignore */ }
+  } catch {}
 })();
 
-// Local CSV upload (your device → server)
+// CSV upload
 if (csvUpload) {
   csvUpload.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
@@ -45,7 +45,7 @@ if (csvUpload) {
   });
 }
 
-// ----- Auditor selector (persists name locally) -----
+// ----- Auditor selector -----
 const auditorSelect  = document.getElementById("auditorSelect");
 const auditorDisplay = document.getElementById("currentAuditorDisplay");
 
@@ -58,7 +58,6 @@ function setAuditor(name) {
   if (!auditorSelect) return;
   const saved = localStorage.getItem("auditorName");
   if (saved) {
-    // ensure option exists
     if (![...auditorSelect.options].some(o => o.value === saved)) {
       const opt = document.createElement("option");
       opt.value = saved; opt.textContent = saved;
@@ -88,7 +87,7 @@ if (auditorSelect) {
   });
 }
 
-// ----- Hide “Expected Bin” column (header + any existing cells) -----
+// ----- Hide Expected Bin column -----
 (function hideExpectedBinColumn() {
   const table = document.querySelector("table");
   if (!table) return;
@@ -99,7 +98,6 @@ if (auditorSelect) {
   });
   if (idx >= 0) {
     ths[idx].style.display = "none";
-    // hide any existing body cells in that column
     table.querySelectorAll("tbody tr").forEach(tr => {
       const td = tr.children[idx];
       if (td) td.style.display = "none";
@@ -111,33 +109,27 @@ if (auditorSelect) {
 const currentBinEl = document.getElementById("currentBin");
 const logTbody     = document.getElementById("logTbody");
 const scanBinBtn   = document.getElementById("scanBinBtn");
-const scanItemBtn  = document.getElementById("scanItemBtn");  // we keep it but continuous starts automatically
+const scanItemBtn  = document.getElementById("scanItemBtn");
 const endBinBtn    = document.getElementById("endBinBtn");
 
 let currentBin = null;
-let scanning   = false;     // continuous item scanning flag
+let scanning   = false;
 
-// ----- Camera pre-permission prompt (reduces repeated prompts) -----
+// ----- Camera permission pre-check -----
 (async () => {
   try {
     if (!navigator.permissions) return;
     const status = await navigator.permissions.query({ name: "camera" });
-    if (status.state === "granted") {
-      console.log("Camera already granted.");
-    } else if (status.state === "prompt") {
-      // ask once on load to reduce later prompts
+    if (status.state === "prompt") {
       await navigator.mediaDevices.getUserMedia({ video: true });
-      console.log("Camera permission requested.");
     }
-  } catch (err) {
-    // Not all browsers support permissions API; ignore
-    console.log("Permissions API not available / ignored", err?.message || "");
-  }
+  } catch {}
 })();
 
-// ----- QR scanning controls -----
+// ----- Button wiring -----
 if (scanBinBtn)  scanBinBtn.onclick  = () => startQRScan("bin");
-if (scanItemBtn) scanItemBtn.onclick = () => startContinuousItemScan(); // still available manually
+if (scanItemBtn) scanItemBtn.onclick = () => startContinuousItemScan();
+
 if (endBinBtn) {
   endBinBtn.onclick = async () => {
     if (!currentBin) return toast("No active bin. Scan a Bin QR first.", "warn");
@@ -149,7 +141,7 @@ if (endBinBtn) {
   };
 }
 
-// ----- Full-screen video overlay helper -----
+// ----- Overlay builder -----
 function createOverlay() {
   const overlay = document.createElement("div");
   overlay.style.position = "fixed";
@@ -169,8 +161,8 @@ function createOverlay() {
   overlay.appendChild(title);
 
   const video = document.createElement("video");
-  video.playsInline = true; // critical for iOS
-  video.muted = true;       // iOS allows autoplay if muted
+  video.playsInline = true;
+  video.muted = true;
   video.autoplay = true;
   video.style.width = "92vw";
   video.style.maxWidth = "640px";
@@ -196,13 +188,10 @@ let activeStream = null;
 function stopAnyOpenScanner() {
   try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch {}
   activeStream = null;
-  const openOverlays = document.querySelectorAll(".shappi-scan-overlay");
-  openOverlays.forEach(el => el.remove());
 }
 
-// ----- One-shot scan (for bin) -----
+// ----- Single bin scan -----
 async function startQRScan(kind) {
-  // Only used for BIN; items use continuous.
   const { overlay, video, stopBtn, title } = createOverlay();
   overlay.className = "shappi-scan-overlay";
 
@@ -214,7 +203,6 @@ async function startQRScan(kind) {
     video.srcObject = activeStream;
     await video.play();
 
-    // Draw / detect
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
 
@@ -227,21 +215,18 @@ async function startQRScan(kind) {
         const code = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: "dontInvert" });
 
         if (code && code.data) {
-          // visual flash feedback
           flashOK();
-          // set current bin
           currentBin = code.data.trim();
           if (currentBinEl) currentBinEl.textContent = currentBin;
           overlay.remove();
           stopAnyOpenScanner();
 
-          // Start bin audit on server
           const auditor = localStorage.getItem("auditorName") || "Unknown";
-          await fetch(`/audit/start/${encodeURIComponent(currentBin)}?auditor=${encodeURIComponent(auditor)}`, { method: "POST" });
-
+          await fetch(`/audit/start/${encodeURIComponent(currentBin)}?auditor=${encodeURIComponent(auditor)}`, {
+            method: "POST"
+          });
           toast(`Bin set: ${currentBin}`, "success");
 
-          // Immediately start continuous item scanning
           startContinuousItemScan();
           return;
         }
@@ -256,19 +241,19 @@ async function startQRScan(kind) {
   }
 }
 
-// ----- Continuous item scanning (hands-free) -----
+// ----- CONTINUOUS ITEM SCAN -----
 async function startContinuousItemScan() {
   if (!currentBin) return toast("Scan a Bin QR first.", "warn");
-  if (scanning)     return; // already running
+  if (scanning) return;
 
   const { overlay, video, stopBtn, title } = createOverlay();
   overlay.className = "shappi-scan-overlay";
   title.textContent = `Scanning Items • Bin ${currentBin}`;
 
   scanning = true;
-  let stopped  = false;
-  let lastCode = "";     // debounce duplicate reads
-  let coolOff  = false;  // brief pause after each hit
+  let stopped = false;
+  let lastCode = "";
+  let coolOff  = false;
 
   stopBtn.onclick = () => {
     stopped = true;
@@ -298,11 +283,9 @@ async function startContinuousItemScan() {
         if (code && code.data) {
           const raw = (code.data || "").trim();
           if (!coolOff && raw && raw !== lastCode) {
-            // visual flash feedback
             flashOK();
             lastCode = raw;
             await handleItemScan(raw);
-            // cool-off to avoid rapid double reads of same code
             coolOff = true;
             setTimeout(() => { coolOff = false; lastCode = ""; }, 900);
           }
@@ -319,40 +302,47 @@ async function startContinuousItemScan() {
   }
 }
 
-// ----- Process item scan result, update table, toast -----
+// ----- PROCESS ITEM SCAN → UI UPDATE -----
 async function handleItemScan(itemId) {
   const auditor = localStorage.getItem("auditorName") || "Unknown";
   try {
-    const res  = await fetch(`/audit/scan?auditor=${encodeURIComponent(auditor)}`, {
+    const res = await fetch(`/audit/scan?auditor=${encodeURIComponent(auditor)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ binId: currentBin, itemId })
     });
+
     const data = await res.json();
 
-    // Map statuses to UI
     let label = "", cls = "";
     if (data.status === "match") {
       label = "Correct Bin"; cls = "green";
       toast(`✓ ${itemId} in correct bin`, "success");
-    } else if (data.status === "mismatch") {
+    }
+    else if (data.status === "mismatch") {
       label = `Wrong Bin → Move to ${data.correctBin || "Unknown"}`; cls = "yellow";
-      toast(`⚠️ Move ${itemId} to ${data.correctBin}`, "warn");
-    } else if (data.status === "no-bin") {
+      toast(`Move ${itemId} to ${data.correctBin}`, "warn");
+    }
+    else if (data.status === "no-bin") {
       label = "No Bin (not in CSV)"; cls = "red";
       toast(`🚫 ${itemId} not in CSV`, "error");
-    } else if (data.status === "missing") {
+    }
+    else if (data.status === "remove-item") {
+      label = "REMOVE ITEM"; cls = "red";
+      toast(`❌ ${itemId} closed/canceled → REMOVE FROM BIN`, "error");
+    }
+    else if (data.status === "missing") {
       label = "Missing"; cls = "grey";
-    } else {
+    }
+    else {
       label = data.status || "Unknown"; cls = "grey";
     }
 
-    // Build row (Expected Bin hidden globally; we omit it here)
     const rec = data.record || {};
     const tr  = document.createElement("tr");
+
     tr.innerHTML = `
       <td>${itemId}</td>
-      <!-- Expected Bin column intentionally omitted (hidden feature) -->
       <td>${currentBin || "-"}</td>
       <td>${rec.received || "-"}</td>
       <td>${rec.statusText || "-"}</td>
@@ -369,6 +359,7 @@ async function handleItemScan(itemId) {
         }
       </td>
     `;
+
     logTbody.prepend(tr);
   } catch (err) {
     console.error("Scan error", err);
@@ -376,7 +367,7 @@ async function handleItemScan(itemId) {
   }
 }
 
-// Resolve toggle (sync to server)
+// ----- Resolve toggle -----
 if (logTbody) {
   logTbody.addEventListener("change", async (e) => {
     const el = e.target;
@@ -384,6 +375,7 @@ if (logTbody) {
     const binId   = el.getAttribute("data-bin");
     const itemId  = el.getAttribute("data-item");
     const resolved = !!el.checked;
+
     try {
       await fetch("/audit/resolve", {
         method: "POST",
@@ -396,12 +388,13 @@ if (logTbody) {
     }
   });
 }
+
 socket.on("itemResolved", ({ binId, itemId, resolved }) => {
   const cb = logTbody.querySelector(`input.resolveToggle[data-bin="${binId}"][data-item="${itemId}"]`);
   if (cb) cb.checked = !!resolved;
 });
 
-// ----- Toast helpers -----
+// ----- Toast helper -----
 function toast(msg, type = "info") {
   let wrap = document.getElementById("shappi-toast-wrap");
   if (!wrap) {
@@ -431,7 +424,7 @@ function toast(msg, type = "info") {
   setTimeout(() => el.remove(), 2200);
 }
 
-// Green flash on successful QR capture (visual confirmation)
+// Green flash on successful QR capture
 function flashOK() {
   const flash = document.createElement("div");
   flash.style.position = "fixed";
