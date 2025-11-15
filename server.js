@@ -114,7 +114,7 @@ app.post("/audit/start/:binId", (req, res) => {
 
 
 // -----------------------------
-// ITEM SCAN V3.1
+// ITEM SCAN V3.1 (remove-item logic)
 // -----------------------------
 app.post("/audit/scan", (req, res) => {
   const { binId, itemId } = req.body;
@@ -137,7 +137,6 @@ app.post("/audit/scan", (req, res) => {
   // -----------------------------
   if (!record) {
     status = "no-bin";
-
     audits[binId].items.unshift({
       itemId,
       expectedBin: "-",

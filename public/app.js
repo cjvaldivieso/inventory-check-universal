@@ -1,4 +1,4 @@
-k/* public/app.js — Shappi Inventory App (hands-free scanning) */
+/* public/app.js — Shappi Inventory App (v3.1 with remove-item UI) */
 
 // ----- Socket & CSV UI wiring -----
 const socket = io();
@@ -13,7 +13,7 @@ socket.on("csvUpdated", (meta) => {
   toast(`CSV updated • ${meta.total} items`, "info");
 });
 
-// Poll server once on load
+// Poll server on load
 (async () => {
   try {
     const r = await fetch("/csv-status");
@@ -25,16 +25,19 @@ socket.on("csvUpdated", (meta) => {
   } catch {}
 })();
 
-// CSV upload
+// Local CSV upload
 if (csvUpload) {
   csvUpload.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
     const fd = new FormData();
     fd.append("file", file);
+
     try {
       const res  = await fetch("/upload-csv", { method: "POST", body: fd });
       const data = await res.json();
+
       if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${data.total})`;
       if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${data.timestamp || data.uploadedAt}`;
       toast(`CSV uploaded • ${data.total} items`, "success");
@@ -54,8 +57,10 @@ function setAuditor(name) {
   localStorage.setItem("auditorName", name);
   if (auditorDisplay) auditorDisplay.textContent = `Current User: ${name}`;
 }
+
 (function loadAuditor() {
   if (!auditorSelect) return;
+
   const saved = localStorage.getItem("auditorName");
   if (saved) {
     if (![...auditorSelect.options].some(o => o.value === saved)) {
@@ -67,9 +72,11 @@ function setAuditor(name) {
     setAuditor(saved);
   }
 })();
+
 if (auditorSelect) {
   auditorSelect.addEventListener("change", () => {
     const v = auditorSelect.value;
+
     if (v === "__add_new__") {
       const nn = prompt("Enter new user name:");
       if (nn) {
@@ -91,11 +98,14 @@ if (auditorSelect) {
 (function hideExpectedBinColumn() {
   const table = document.querySelector("table");
   if (!table) return;
+
   const ths = table.querySelectorAll("thead th");
   let idx = -1;
+
   ths.forEach((th, i) => {
     if (String(th.textContent).toLowerCase().includes("expected bin")) idx = i;
   });
+
   if (idx >= 0) {
     ths[idx].style.display = "none";
     table.querySelectorAll("tbody tr").forEach(tr => {
@@ -105,7 +115,7 @@ if (auditorSelect) {
   }
 })();
 
-// ----- DOM refs & state -----
+// ----- DOM refs -----
 const currentBinEl = document.getElementById("currentBin");
 const logTbody     = document.getElementById("logTbody");
 const scanBinBtn   = document.getElementById("scanBinBtn");
@@ -115,7 +125,7 @@ const endBinBtn    = document.getElementById("endBinBtn");
 let currentBin = null;
 let scanning   = false;
 
-// ----- Camera permission pre-check -----
+// ----- Camera permission preload -----
 (async () => {
   try {
     if (!navigator.permissions) return;
@@ -126,58 +136,54 @@ let scanning   = false;
   } catch {}
 })();
 
-// ----- Button wiring -----
+// ----- Scan Controls -----
 if (scanBinBtn)  scanBinBtn.onclick  = () => startQRScan("bin");
 if (scanItemBtn) scanItemBtn.onclick = () => startContinuousItemScan();
 
 if (endBinBtn) {
   endBinBtn.onclick = async () => {
     if (!currentBin) return toast("No active bin. Scan a Bin QR first.", "warn");
+
     await fetch(`/audit/end/${encodeURIComponent(currentBin)}`, { method: "POST" });
     toast(`Audit ended for ${currentBin}`, "info");
+
     currentBin = null;
     if (currentBinEl) currentBinEl.textContent = "None";
     stopAnyOpenScanner();
   };
 }
 
-// ----- Overlay builder -----
+// ----- Overlay (shared) -----
 function createOverlay() {
   const overlay = document.createElement("div");
-  overlay.style.position = "fixed";
-  overlay.style.inset = "0";
-  overlay.style.background = "rgba(0,0,0,0.92)";
-  overlay.style.display = "flex";
-  overlay.style.flexDirection = "column";
-  overlay.style.alignItems = "center";
-  overlay.style.justifyContent = "center";
-  overlay.style.zIndex = "9999";
+  overlay.className = "shappi-scan-overlay";
+  overlay.style = `
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.92);
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    z-index: 9999;
+  `;
 
   const title = document.createElement("div");
   title.textContent = currentBin ? `Scanning Items • Bin ${currentBin}` : "Scan Bin";
-  title.style.color = "#fff";
-  title.style.fontWeight = "700";
-  title.style.margin = "8px 0 12px";
+  title.style = "color: #fff; font-weight: 700; margin: 8px 0 12px;";
   overlay.appendChild(title);
 
   const video = document.createElement("video");
   video.playsInline = true;
   video.muted = true;
   video.autoplay = true;
-  video.style.width = "92vw";
-  video.style.maxWidth = "640px";
-  video.style.borderRadius = "12px";
+  video.style = "width: 92vw; max-width: 640px; border-radius: 12px;";
   overlay.appendChild(video);
 
   const stopBtn = document.createElement("button");
   stopBtn.textContent = "🛑 Stop Scanning";
-  stopBtn.style.marginTop = "16px";
-  stopBtn.style.background = "#ff5555";
-  stopBtn.style.color = "#fff";
-  stopBtn.style.border = "none";
-  stopBtn.style.padding = "10px 20px";
-  stopBtn.style.borderRadius = "10px";
-  stopBtn.style.fontWeight = "600";
+  stopBtn.style = `
+    margin-top: 16px; background: #ff5555;
+    color: #fff; border: none; padding: 10px 20px;
+    border-radius: 10px; font-weight: 600;
+  `;
   overlay.appendChild(stopBtn);
 
   document.body.appendChild(overlay);
@@ -188,12 +194,13 @@ let activeStream = null;
 function stopAnyOpenScanner() {
   try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch {}
   activeStream = null;
+
+  document.querySelectorAll(".shappi-scan-overlay").forEach(el => el.remove());
 }
 
-// ----- Single bin scan -----
-async function startQRScan(kind) {
-  const { overlay, video, stopBtn, title } = createOverlay();
-  overlay.className = "shappi-scan-overlay";
+// ----- One-shot BIN scan -----
+async function startQRScan() {
+  const { overlay, video, stopBtn } = createOverlay();
 
   let stopped = false;
   stopBtn.onclick = () => { stopped = true; stopAnyOpenScanner(); overlay.remove(); };
@@ -208,9 +215,12 @@ async function startQRScan(kind) {
 
     const loop = async () => {
       if (stopped) return;
+
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const code = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: "dontInvert" });
 
@@ -218,6 +228,7 @@ async function startQRScan(kind) {
           flashOK();
           currentBin = code.data.trim();
           if (currentBinEl) currentBinEl.textContent = currentBin;
+
           overlay.remove();
           stopAnyOpenScanner();
 
@@ -225,14 +236,15 @@ async function startQRScan(kind) {
           await fetch(`/audit/start/${encodeURIComponent(currentBin)}?auditor=${encodeURIComponent(auditor)}`, {
             method: "POST"
           });
-          toast(`Bin set: ${currentBin}`, "success");
 
+          toast(`Bin set: ${currentBin}`, "success");
           startContinuousItemScan();
           return;
         }
       }
       requestAnimationFrame(loop);
     };
+
     loop();
   } catch (err) {
     console.error("Camera error", err);
@@ -241,19 +253,18 @@ async function startQRScan(kind) {
   }
 }
 
-// ----- CONTINUOUS ITEM SCAN -----
+// ----- Continuous ITEM scan -----
 async function startContinuousItemScan() {
   if (!currentBin) return toast("Scan a Bin QR first.", "warn");
   if (scanning) return;
 
   const { overlay, video, stopBtn, title } = createOverlay();
-  overlay.className = "shappi-scan-overlay";
   title.textContent = `Scanning Items • Bin ${currentBin}`;
-
   scanning = true;
+
   let stopped = false;
   let lastCode = "";
-  let coolOff  = false;
+  let coolOff = false;
 
   stopBtn.onclick = () => {
     stopped = true;
@@ -275,17 +286,21 @@ async function startContinuousItemScan() {
       if (stopped || !scanning) return;
 
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth; canvas.height = video.videoHeight;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code  = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: "dontInvert" });
+        const code = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: "dontInvert" });
 
         if (code && code.data) {
-          const raw = (code.data || "").trim();
+          const raw = code.data.trim();
+
           if (!coolOff && raw && raw !== lastCode) {
             flashOK();
             lastCode = raw;
             await handleItemScan(raw);
+
             coolOff = true;
             setTimeout(() => { coolOff = false; lastCode = ""; }, 900);
           }
@@ -293,18 +308,20 @@ async function startContinuousItemScan() {
       }
       requestAnimationFrame(tick);
     };
+
     tick();
   } catch (err) {
     console.error("Camera error", err);
     scanning = false;
-    toast("Camera access denied or unavailable", "error");
+    toast("Camera error", "error");
     overlay.remove();
   }
 }
 
-// ----- PROCESS ITEM SCAN → UI UPDATE -----
+// ----- Handle scanned item -----
 async function handleItemScan(itemId) {
   const auditor = localStorage.getItem("auditorName") || "Unknown";
+
   try {
     const res = await fetch(`/audit/scan?auditor=${encodeURIComponent(auditor)}`, {
       method: "POST",
@@ -314,35 +331,36 @@ async function handleItemScan(itemId) {
 
     const data = await res.json();
 
+    // ----- Status → UI -----
     let label = "", cls = "";
+
     if (data.status === "match") {
       label = "Correct Bin"; cls = "green";
       toast(`✓ ${itemId} in correct bin`, "success");
-    }
-    else if (data.status === "mismatch") {
+
+    } else if (data.status === "mismatch") {
       label = `Wrong Bin → Move to ${data.correctBin || "Unknown"}`; cls = "yellow";
-      toast(`Move ${itemId} to ${data.correctBin}`, "warn");
-    }
-    else if (data.status === "no-bin") {
+      toast(`⚠️ Move ${itemId} to ${data.correctBin}`, "warn");
+
+    } else if (data.status === "no-bin") {
       label = "No Bin (not in CSV)"; cls = "red";
       toast(`🚫 ${itemId} not in CSV`, "error");
-    }
-    else if (data.status === "remove-item") {
-      label = "REMOVE ITEM"; cls = "red";
-      toast(`❌ ${itemId} closed/canceled → REMOVE FROM BIN`, "error");
-    }
-    else if (data.status === "missing") {
-      label = "Missing"; cls = "grey";
-    }
-    else {
+
+    } else if (data.status === "remove-item") {
+      label = "Remove Item"; cls = "red";
+      toast(`🗑️ ${itemId} closed/canceled → REMOVE FROM BIN`, "error");
+
+    } else {
       label = data.status || "Unknown"; cls = "grey";
     }
 
+    // ----- Build audit table row -----
     const rec = data.record || {};
-    const tr  = document.createElement("tr");
+    const tr = document.createElement("tr");
 
     tr.innerHTML = `
       <td>${itemId}</td>
+      <!-- Expected Bin hidden globally -->
       <td>${currentBin || "-"}</td>
       <td>${rec.received || "-"}</td>
       <td>${rec.statusText || "-"}</td>
@@ -350,20 +368,25 @@ async function handleItemScan(itemId) {
       <td>${rec.subcategory || "-"}</td>
       <td><span class="status-pill ${cls}">${label}</span></td>
       <td>
-        ${data.status === "mismatch"
-          ? `<label style="cursor:pointer;">
-               <input type="checkbox" data-bin="${currentBin}" data-item="${itemId}" class="resolveToggle">
-               Mark Moved
-             </label>`
-          : "-"
+        ${
+          data.status === "mismatch"
+            ? `<label style="cursor:pointer;">
+                <input type="checkbox"
+                       data-bin="${currentBin}"
+                       data-item="${itemId}"
+                       class="resolveToggle">
+                Mark Moved
+               </label>`
+            : "-"
         }
       </td>
     `;
 
     logTbody.prepend(tr);
+
   } catch (err) {
     console.error("Scan error", err);
-    toast("Scan error", "error");
+    toast("Scan failed", "error");
   }
 }
 
@@ -372,8 +395,9 @@ if (logTbody) {
   logTbody.addEventListener("change", async (e) => {
     const el = e.target;
     if (!el.classList.contains("resolveToggle")) return;
-    const binId   = el.getAttribute("data-bin");
-    const itemId  = el.getAttribute("data-item");
+
+    const binId = el.getAttribute("data-bin");
+    const itemId = el.getAttribute("data-item");
     const resolved = !!el.checked;
 
     try {
@@ -390,7 +414,9 @@ if (logTbody) {
 }
 
 socket.on("itemResolved", ({ binId, itemId, resolved }) => {
-  const cb = logTbody.querySelector(`input.resolveToggle[data-bin="${binId}"][data-item="${itemId}"]`);
+  const cb = logTbody.querySelector(
+    `input.resolveToggle[data-bin="${binId}"][data-item="${itemId}"]`
+  );
   if (cb) cb.checked = !!resolved;
 });
 
@@ -400,37 +426,40 @@ function toast(msg, type = "info") {
   if (!wrap) {
     wrap = document.createElement("div");
     wrap.id = "shappi-toast-wrap";
-    wrap.style.position = "fixed";
-    wrap.style.left = "50%";
-    wrap.style.bottom = "24px";
-    wrap.style.transform = "translateX(-50%)";
-    wrap.style.zIndex = "10000";
+    wrap.style = `
+      position: fixed; left: 50%; bottom: 24px;
+      transform: translateX(-50%);
+      z-index: 10000;
+    `;
     document.body.appendChild(wrap);
   }
+
   const el = document.createElement("div");
   el.textContent = msg;
-  el.style.marginTop = "8px";
-  el.style.padding = "10px 14px";
-  el.style.borderRadius = "10px";
-  el.style.fontWeight = "600";
-  el.style.color = "#fff";
-  el.style.boxShadow = "0 4px 14px rgba(0,0,0,.3)";
-  el.style.background = (
-    type === "success" ? "#28a745" :
-    type === "warn"    ? "#ffc107" :
-    type === "error"   ? "#dc3545" : "#6c47ff"
-  );
+  el.style = `
+    margin-top: 8px; padding: 10px 14px;
+    border-radius: 10px; font-weight: 600;
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(0,0,0,.3);
+    background: ${
+      type === "success" ? "#28a745" :
+      type === "warn"    ? "#ffc107" :
+      type === "error"   ? "#dc3545" : "#6c47ff"
+    };
+  `;
+
   wrap.appendChild(el);
   setTimeout(() => el.remove(), 2200);
 }
 
-// Green flash on successful QR capture
+// ----- Flash green (QR confirm) -----
 function flashOK() {
   const flash = document.createElement("div");
-  flash.style.position = "fixed";
-  flash.style.inset = "0";
-  flash.style.background = "rgba(40,167,69,0.28)";
-  flash.style.zIndex = "9998";
+  flash.style = `
+    position: fixed; inset: 0;
+    background: rgba(40,167,69,0.28);
+    z-index: 9998;
+  `;
   document.body.appendChild(flash);
   setTimeout(() => flash.remove(), 180);
 }
