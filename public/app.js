@@ -1,31 +1,40 @@
-/* public/app.js — Shappi Inventory App (v3.1 with remove-item UI) */
+/* public/app.js — Shappi Inventory App (v3.2) */
+/* Includes:
+   - remove-item UI
+   - export visible results
+   - download full audit CSV
+   - hide Category + Subcategory
+   - shrink table layout to avoid scrolling
+*/
 
-// ----- Socket & CSV UI wiring -----
+// -------------------------------
+// SOCKET + CSV META HANDLING
+// -------------------------------
 const socket = io();
 const csvInfo      = document.getElementById("csvInfo");
 const csvTimestamp = document.getElementById("csvTimestamp");
 const csvUpload    = document.getElementById("csvUpload");
 
-// Live CSV updates from server
+// Live CSV updates
 socket.on("csvUpdated", (meta) => {
   if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${meta.total})`;
   if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
   toast(`CSV updated • ${meta.total} items`, "info");
 });
 
-// Poll server on load
+// Poll on load
 (async () => {
   try {
     const r = await fetch("/csv-status");
     const d = await r.json();
     if (d && typeof d.total !== "undefined") {
       if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${d.total})`;
-      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${d.timestamp || "(none)"}`;
+      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${d.uploadedAt}`;
     }
   } catch {}
 })();
 
-// Local CSV upload
+// Upload local CSV
 if (csvUpload) {
   csvUpload.addEventListener("change", async (e) => {
     const file = e.target.files?.[0];
@@ -37,18 +46,18 @@ if (csvUpload) {
     try {
       const res  = await fetch("/upload-csv", { method: "POST", body: fd });
       const data = await res.json();
-
       if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${data.total})`;
-      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${data.timestamp || data.uploadedAt}`;
+      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${data.uploadedAt}`;
       toast(`CSV uploaded • ${data.total} items`, "success");
     } catch (err) {
-      console.error("CSV upload failed", err);
       toast("CSV upload failed", "error");
     }
   });
 }
 
-// ----- Auditor selector -----
+// -------------------------------
+// AUDITOR SELECTOR
+// -------------------------------
 const auditorSelect  = document.getElementById("auditorSelect");
 const auditorDisplay = document.getElementById("currentAuditorDisplay");
 
@@ -60,12 +69,12 @@ function setAuditor(name) {
 
 (function loadAuditor() {
   if (!auditorSelect) return;
-
   const saved = localStorage.getItem("auditorName");
   if (saved) {
     if (![...auditorSelect.options].some(o => o.value === saved)) {
       const opt = document.createElement("option");
-      opt.value = saved; opt.textContent = saved;
+      opt.value = saved;
+      opt.textContent = saved;
       auditorSelect.insertBefore(opt, auditorSelect.lastElementChild);
     }
     auditorSelect.value = saved;
@@ -76,12 +85,12 @@ function setAuditor(name) {
 if (auditorSelect) {
   auditorSelect.addEventListener("change", () => {
     const v = auditorSelect.value;
-
     if (v === "__add_new__") {
       const nn = prompt("Enter new user name:");
       if (nn) {
         const o = document.createElement("option");
-        o.value = nn; o.textContent = nn;
+        o.value = nn;
+        o.textContent = nn;
         auditorSelect.insertBefore(o, auditorSelect.lastElementChild);
         auditorSelect.value = nn;
         setAuditor(nn);
@@ -94,38 +103,59 @@ if (auditorSelect) {
   });
 }
 
-// ----- Hide Expected Bin column -----
-(function hideExpectedBinColumn() {
+// -------------------------------
+// HIDE Expected Bin + Category + Subcategory columns
+// -------------------------------
+(function hideColumns() {
   const table = document.querySelector("table");
   if (!table) return;
 
+  const hiddenKeys = ["expected bin", "category", "subcategory"];
+
   const ths = table.querySelectorAll("thead th");
-  let idx = -1;
+  const hideIndices = [];
 
   ths.forEach((th, i) => {
-    if (String(th.textContent).toLowerCase().includes("expected bin")) idx = i;
+    const text = th.textContent.trim().toLowerCase();
+    if (hiddenKeys.includes(text)) hideIndices.push(i);
   });
 
-  if (idx >= 0) {
-    ths[idx].style.display = "none";
+  hideIndices.forEach(i => {
+    ths[i].style.display = "none";
     table.querySelectorAll("tbody tr").forEach(tr => {
-      const td = tr.children[idx];
+      const td = tr.children[i];
       if (td) td.style.display = "none";
     });
-  }
+  });
 })();
 
-// ----- DOM refs -----
-const currentBinEl = document.getElementById("currentBin");
-const logTbody     = document.getElementById("logTbody");
-const scanBinBtn   = document.getElementById("scanBinBtn");
-const scanItemBtn  = document.getElementById("scanItemBtn");
-const endBinBtn    = document.getElementById("endBinBtn");
+// -------------------------------
+// DOM + UI REFS
+// -------------------------------
+const currentBinEl   = document.getElementById("currentBin");
+const logTbody       = document.getElementById("logTbody");
+const scanBinBtn     = document.getElementById("scanBinBtn");
+const scanItemBtn    = document.getElementById("scanItemBtn");
+const endBinBtn      = document.getElementById("endBinBtn");
+const exportVisibleBtn = document.getElementById("exportVisible");
+const downloadAuditBtn = document.getElementById("downloadAuditCsv");
 
 let currentBin = null;
 let scanning   = false;
 
-// ----- Camera permission preload -----
+// Reduce table font size to avoid horizontal scroll
+(function compressTable() {
+  const table = document.querySelector("table");
+  if (table) {
+    table.style.fontSize = "13px";
+    table.style.tableLayout = "fixed";
+    table.style.width = "100%";
+  }
+})();
+
+// -------------------------------
+// CAMERA PERMISSION PREFETCH
+// -------------------------------
 (async () => {
   try {
     if (!navigator.permissions) return;
@@ -136,24 +166,25 @@ let scanning   = false;
   } catch {}
 })();
 
-// ----- Scan Controls -----
-if (scanBinBtn)  scanBinBtn.onclick  = () => startQRScan("bin");
+// -------------------------------
+// BUTTON HOOKS
+// -------------------------------
+if (scanBinBtn)  scanBinBtn.onclick  = () => startQRScan();
 if (scanItemBtn) scanItemBtn.onclick = () => startContinuousItemScan();
-
 if (endBinBtn) {
   endBinBtn.onclick = async () => {
-    if (!currentBin) return toast("No active bin. Scan a Bin QR first.", "warn");
-
+    if (!currentBin) return toast("No active bin. Scan a bin first.", "warn");
     await fetch(`/audit/end/${encodeURIComponent(currentBin)}`, { method: "POST" });
     toast(`Audit ended for ${currentBin}`, "info");
-
     currentBin = null;
     if (currentBinEl) currentBinEl.textContent = "None";
     stopAnyOpenScanner();
   };
 }
 
-// ----- Overlay (shared) -----
+// -------------------------------
+// VIDEO OVERLAY
+// -------------------------------
 function createOverlay() {
   const overlay = document.createElement("div");
   overlay.className = "shappi-scan-overlay";
@@ -180,9 +211,13 @@ function createOverlay() {
   const stopBtn = document.createElement("button");
   stopBtn.textContent = "🛑 Stop Scanning";
   stopBtn.style = `
-    margin-top: 16px; background: #ff5555;
-    color: #fff; border: none; padding: 10px 20px;
-    border-radius: 10px; font-weight: 600;
+    margin-top: 16px;
+    background: #ff5555;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 10px;
+    font-weight: 600;
   `;
   overlay.appendChild(stopBtn);
 
@@ -194,19 +229,20 @@ let activeStream = null;
 function stopAnyOpenScanner() {
   try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch {}
   activeStream = null;
-
   document.querySelectorAll(".shappi-scan-overlay").forEach(el => el.remove());
 }
 
-// ----- One-shot BIN scan -----
+// -------------------------------
+// BIN SCANNING
+// -------------------------------
 async function startQRScan() {
   const { overlay, video, stopBtn } = createOverlay();
-
   let stopped = false;
+
   stopBtn.onclick = () => { stopped = true; stopAnyOpenScanner(); overlay.remove(); };
 
   try {
-    activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }});
     video.srcObject = activeStream;
     await video.play();
 
@@ -222,7 +258,7 @@ async function startQRScan() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: "dontInvert" });
+        const code  = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: "dontInvert" });
 
         if (code && code.data) {
           flashOK();
@@ -242,26 +278,28 @@ async function startQRScan() {
           return;
         }
       }
+
       requestAnimationFrame(loop);
     };
-
     loop();
-  } catch (err) {
-    console.error("Camera error", err);
-    toast("Camera access denied or unavailable", "error");
+
+  } catch {
+    toast("Camera unavailable", "error");
     overlay.remove();
   }
 }
 
-// ----- Continuous ITEM scan -----
+// -------------------------------
+// ITEM SCANNING
+// -------------------------------
 async function startContinuousItemScan() {
-  if (!currentBin) return toast("Scan a Bin QR first.", "warn");
+  if (!currentBin) return toast("Scan a bin first.", "warn");
   if (scanning) return;
 
-  const { overlay, video, stopBtn, title } = createOverlay();
-  title.textContent = `Scanning Items • Bin ${currentBin}`;
-  scanning = true;
+  const { overlay, video, stopBtn } = createOverlay();
+  overlay.querySelector("div").textContent = `Scanning Items • Bin ${currentBin}`;
 
+  scanning = true;
   let stopped = false;
   let lastCode = "";
   let coolOff = false;
@@ -271,11 +309,10 @@ async function startContinuousItemScan() {
     scanning = false;
     stopAnyOpenScanner();
     overlay.remove();
-    toast("Stopped scanning", "info");
   };
 
   try {
-    activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+    activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }});
     video.srcObject = activeStream;
     await video.play();
 
@@ -291,34 +328,32 @@ async function startContinuousItemScan() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: "dontInvert" });
+        const code  = jsQR(frame.data, frame.width, frame.height, { inversionAttempts: "dontInvert" });
 
         if (code && code.data) {
           const raw = code.data.trim();
-
           if (!coolOff && raw && raw !== lastCode) {
-            flashOK();
             lastCode = raw;
+            flashOK();
             await handleItemScan(raw);
-
             coolOff = true;
-            setTimeout(() => { coolOff = false; lastCode = ""; }, 900);
+            setTimeout(() => { coolOff = false; lastCode = ""; }, 800);
           }
         }
       }
       requestAnimationFrame(tick);
     };
-
     tick();
-  } catch (err) {
-    console.error("Camera error", err);
-    scanning = false;
+
+  } catch {
     toast("Camera error", "error");
     overlay.remove();
   }
 }
 
-// ----- Handle scanned item -----
+// -------------------------------
+// HANDLE ITEM SCAN → TABLE
+// -------------------------------
 async function handleItemScan(itemId) {
   const auditor = localStorage.getItem("auditorName") || "Unknown";
 
@@ -331,52 +366,49 @@ async function handleItemScan(itemId) {
 
     const data = await res.json();
 
-    // ----- Status → UI -----
     let label = "", cls = "";
 
     if (data.status === "match") {
       label = "Correct Bin"; cls = "green";
-      toast(`✓ ${itemId} in correct bin`, "success");
+      toast(`✓ ${itemId} OK`, "success");
 
     } else if (data.status === "mismatch") {
-      label = `Wrong Bin → Move to ${data.correctBin || "Unknown"}`; cls = "yellow";
-      toast(`⚠️ Move ${itemId} to ${data.correctBin}`, "warn");
+      label = `Wrong Bin → ${data.correctBin}`;
+      cls = "yellow";
+      toast(`Move ${itemId} to ${data.correctBin}`, "warn");
 
     } else if (data.status === "no-bin") {
-      label = "No Bin (not in CSV)"; cls = "red";
-      toast(`🚫 ${itemId} not in CSV`, "error");
+      label = "Not in CSV"; cls = "red";
+      toast(`${itemId} not in CSV`, "error");
 
     } else if (data.status === "remove-item") {
       label = "Remove Item"; cls = "red";
-      toast(`🗑️ ${itemId} closed/canceled → REMOVE FROM BIN`, "error");
+      toast(`REMOVE ${itemId}`, "error");
 
     } else {
-      label = data.status || "Unknown"; cls = "grey";
+      label = data.status || "Unknown";
+      cls = "grey";
     }
 
-    // ----- Build audit table row -----
     const rec = data.record || {};
     const tr = document.createElement("tr");
 
+    tr.style.fontSize = "13px";
+
     tr.innerHTML = `
       <td>${itemId}</td>
-      <!-- Expected Bin hidden globally -->
       <td>${currentBin || "-"}</td>
       <td>${rec.received || "-"}</td>
       <td>${rec.statusText || "-"}</td>
-      <td>${rec.category || "-"}</td>
-      <td>${rec.subcategory || "-"}</td>
+      <!-- HIDDEN COLS -->
+      <td style="display:none">${rec.category || "-"}</td>
+      <td style="display:none">${rec.subcategory || "-"}</td>
       <td><span class="status-pill ${cls}">${label}</span></td>
       <td>
         ${
           data.status === "mismatch"
-            ? `<label style="cursor:pointer;">
-                <input type="checkbox"
-                       data-bin="${currentBin}"
-                       data-item="${itemId}"
-                       class="resolveToggle">
-                Mark Moved
-               </label>`
+            ? `<label><input type="checkbox" class="resolveToggle"
+                      data-bin="${currentBin}" data-item="${itemId}"> Move OK</label>`
             : "-"
         }
       </td>
@@ -384,13 +416,14 @@ async function handleItemScan(itemId) {
 
     logTbody.prepend(tr);
 
-  } catch (err) {
-    console.error("Scan error", err);
+  } catch {
     toast("Scan failed", "error");
   }
 }
 
-// ----- Resolve toggle -----
+// -------------------------------
+// RESOLUTION TOGGLE
+// -------------------------------
 if (logTbody) {
   logTbody.addEventListener("change", async (e) => {
     const el = e.target;
@@ -398,21 +431,16 @@ if (logTbody) {
 
     const binId = el.getAttribute("data-bin");
     const itemId = el.getAttribute("data-item");
-    const resolved = !!el.checked;
 
-    try {
-      await fetch("/audit/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ binId, itemId, resolved })
-      });
-    } catch (err) {
-      console.error("Resolve update failed", err);
-      toast("Failed to update resolve state", "error");
-    }
+    await fetch("/audit/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ binId, itemId, resolved: !!el.checked })
+    });
   });
 }
 
+// Server-broadcast resolution updates
 socket.on("itemResolved", ({ binId, itemId, resolved }) => {
   const cb = logTbody.querySelector(
     `input.resolveToggle[data-bin="${binId}"][data-item="${itemId}"]`
@@ -420,16 +448,62 @@ socket.on("itemResolved", ({ binId, itemId, resolved }) => {
   if (cb) cb.checked = !!resolved;
 });
 
-// ----- Toast helper -----
+// -------------------------------
+// EXPORT ONSCREEN RESULTS
+// -------------------------------
+if (exportVisibleBtn) {
+  exportVisibleBtn.onclick = () => {
+    const table = document.querySelector("table");
+    if (!table) return;
+
+    const rows = [];
+    const headers = [...table.querySelectorAll("thead th")]
+      .filter(th => th.style.display !== "none")
+      .map(th => th.textContent.trim());
+
+    rows.push(headers);
+
+    [...table.querySelectorAll("tbody tr")].forEach(tr => {
+      const cells = [...tr.children]
+        .filter(td => td.style.display !== "none")
+        .map(td => td.textContent.trim());
+      rows.push(cells);
+    });
+
+    const csv = rows.map(r => r.map(v => `"${v.replace(/"/g,'""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `shappi_visible_${Date.now()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+}
+
+// -------------------------------
+// DOWNLOAD FULL AUDIT CSV (backend)
+// -------------------------------
+if (downloadAuditBtn) {
+  downloadAuditBtn.onclick = () => {
+    window.location.href = "/export-summary";
+  };
+}
+
+// -------------------------------
+// TOAST + FLASH HELPERS
+// -------------------------------
 function toast(msg, type = "info") {
   let wrap = document.getElementById("shappi-toast-wrap");
   if (!wrap) {
     wrap = document.createElement("div");
     wrap.id = "shappi-toast-wrap";
     wrap.style = `
-      position: fixed; left: 50%; bottom: 24px;
+      position: fixed;
+      left: 50%; bottom: 24px;
       transform: translateX(-50%);
-      z-index: 10000;
+      z-index: 999999;
     `;
     document.body.appendChild(wrap);
   }
@@ -437,30 +511,29 @@ function toast(msg, type = "info") {
   const el = document.createElement("div");
   el.textContent = msg;
   el.style = `
-    margin-top: 8px; padding: 10px 14px;
-    border-radius: 10px; font-weight: 600;
+    margin-top: 8px; padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 13px; font-weight: 600;
     color: #fff;
-    box-shadow: 0 4px 14px rgba(0,0,0,.3);
     background: ${
       type === "success" ? "#28a745" :
       type === "warn"    ? "#ffc107" :
       type === "error"   ? "#dc3545" : "#6c47ff"
     };
   `;
-
   wrap.appendChild(el);
+
   setTimeout(() => el.remove(), 2200);
 }
 
-// ----- Flash green (QR confirm) -----
 function flashOK() {
   const flash = document.createElement("div");
   flash.style = `
     position: fixed; inset: 0;
     background: rgba(40,167,69,0.28);
-    z-index: 9998;
+    z-index: 999998;
   `;
   document.body.appendChild(flash);
-  setTimeout(() => flash.remove(), 180);
+  setTimeout(() => flash.remove(), 150);
 }
 
