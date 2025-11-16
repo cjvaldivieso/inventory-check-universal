@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Shappi Inventory App</title>
   <link rel="manifest" href="manifest.json" />
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
 
@@ -79,6 +80,7 @@
     }
   </style>
 </head>
+
 <body>
   <header>
     <img src="icons/shappi-inventory.png" alt="Shappi Logo"
@@ -86,11 +88,11 @@
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
-  <!-- CSV FIRST -->
+  <!-- CSV UPLOAD -->
   <div class="row">
     <input type="file" id="csvUpload" accept=".csv" class="btn" />
     <div id="csvInfo">No CSV uploaded yet.</div>
-    <p id="csvTimestamp" style="color:#bdbde6; margin-top:8px;">Last Updated: (none)</p>
+    <p id="csvTimestamp">Last Updated: (none)</p>
   </div>
 
   <!-- Select User -->
@@ -106,7 +108,8 @@
       <option>Justin</option>
       <option value="__add_new__">+ Add New User</option>
     </select>
-    <div id="currentAuditorDisplay" style="margin-top:8px;font-weight:700;color:#6c47ff">
+
+    <div id="currentAuditorDisplay" style="margin-top:8px;font-weight:700;color:#6c47ff;">
       Current User: <span id="currentAuditor">None</span>
     </div>
   </div>
@@ -116,14 +119,17 @@
     <button id="scanBinBtn"   class="btn">Scan Bin QR</button>
     <button id="scanItemBtn"  class="btn">Scan Item QR (Continuous)</button>
     <button id="endBinBtn"    class="btn">End Bin Audit</button>
-    <button id="exportLogBtn" class="btn">Export On-Screen Results</button>
-    <button id="exportSummaryBtn" class="btn">Download Full Audit CSV</button>
+
+    <!-- FIXED BUTTON IDS -->
+    <button id="exportVisible"     class="btn">Export On-Screen Results</button>
+    <button id="downloadAuditCsv"  class="btn">Download Full Audit CSV</button>
   </div>
 
   <div class="row" style="font-weight:700">
     Current Bin: <span id="currentBin">None</span>
   </div>
 
+  <!-- Results Table -->
   <div class="row">
     <table>
       <thead>
@@ -135,7 +141,7 @@
           <th>Shappi Status</th>
           <th>Category</th>
           <th>Subcategory</th>
-          <th>Audit Status</th>   <!-- 👈 renamed -->
+          <th>Audit Status</th>
           <th>Resolved</th>
         </tr>
       </thead>
@@ -143,29 +149,29 @@
     </table>
   </div>
 
-  <!-- little toast for confirmations -->
+  <!-- Toast -->
   <div id="toast" style="
       position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
       background: #1e293b; color: #fff; border: 1px solid #6c47ff;
-      padding: 10px 14px; border-radius: 10px; display: none; z-index: 99999;">
+      padding: 10px 14px; border-radius: 10px;
+      display: none; z-index: 99999;">
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
-
-  <!-- Service worker with cache-bust -->
+  <!-- Service worker -->
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         try {
-          const reg = await navigator.serviceWorker.register("/service-worker.js?v=5");
+          const reg = await navigator.serviceWorker.register("/service-worker.js");
           reg.update();
-        } catch (e) { console.log("SW registration failed", e); }
+        } catch (e) {
+          console.error("SW registration failed", e);
+        }
       });
     }
   </script>
 
-  <script src="app.js?v=5"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>
 
