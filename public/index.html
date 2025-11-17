@@ -88,12 +88,14 @@
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
-  <!-- CSV UPLOAD -->
-  <div class="row">
-    <input type="file" id="csvUpload" accept=".csv" class="btn" />
-    <div id="csvInfo">No CSV uploaded yet.</div>
-    <p id="csvTimestamp">Last Updated: (none)</p>
-  </div>
+<!-- CSV UPLOAD -->
+<div class="row">
+  <label for="csvUpload" class="btn">Upload CSV</label>
+  <input type="file" id="csvUpload" accept=".csv" style="display:none" />
+
+  <div id="csvInfo">No CSV uploaded yet.</div>
+  <p id="csvTimestamp">Last Updated: (none)</p>
+</div>
 
   <!-- Select User -->
   <div class="row">
@@ -105,7 +107,6 @@
       <option>CJ</option>
       <option>Eric</option>
       <option>Greg</option>
-      <option>Justin</option>
       <option value="__add_new__">+ Add New User</option>
     </select>
 
