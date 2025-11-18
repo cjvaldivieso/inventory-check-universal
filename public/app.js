@@ -1,6 +1,6 @@
-/* public/app.js — Shappi Inventory App (v3.4) */
+/* public/app.js — Shappi Inventory App (v3.5) */
 /* Includes:
- - bin scanning fix (startQRScan)
+ - bin scanning fix (broken truncated line fixed)
  - timestamp fix for second-user CSV visibility
  - strong debounce to prevent duplicate scans
  - duplicate row prevention (update existing rows)
@@ -32,8 +32,9 @@ socket.on("csvUpdated", (meta) => {
     const d = await r.json();
 
     if (typeof d.total !== "undefined") {
-      if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${d.total})`;
-      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${d.uploadedAt || "(none)"}`;
+      if (csvInfo) csvInfo.textContent = `📦 CSV Loaded (${d.total})`;
+      if (csvTimestamp)
+        csvTimestamp.textContent = `Last Updated: ${d.uploadedAt || "(none)"}`;
     }
   } catch (err) {
     console.error("csv-status error", err);
@@ -87,6 +88,7 @@ function setAuditor(name) {
       opt.textContent = saved;
       auditorSelect.insertBefore(opt, auditorSelect.lastElementChild);
     }
+
     auditorSelect.value = saved;
     setAuditor(saved);
   }
@@ -96,6 +98,7 @@ function setAuditor(name) {
 if (auditorSelect) {
   auditorSelect.addEventListener("change", () => {
     const v = auditorSelect.value;
+
     if (v === "__add_new__") {
       const nn = prompt("Enter new user name:");
       if (nn) {
@@ -195,10 +198,10 @@ function createOverlay() {
 }
 
 let activeStream = null;
-
 function stopAnyOpenScanner() {
   try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch {}
   activeStream = null;
+
   document.querySelectorAll(".shappi-scan-overlay").forEach(el => el.remove());
 }
 
@@ -232,7 +235,7 @@ async function startQRScan() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(frame.data, frame.width, frame.height);
+        const code  = jsQR(frame.data, frame.width, frame.height);
 
         if (code && code.data) {
           flashOK();
@@ -244,9 +247,10 @@ async function startQRScan() {
 
           const auditor = localStorage.getItem("auditorName") || "Unknown";
 
-          await fetch(`/audit/start/${encodeURIComponent(currentBin)}?auditor=${encodeURIComponent(auditor)}`, {
-            method: "POST"
-          });
+          await fetch(
+            `/audit/start/${encodeURIComponent(currentBin)}?auditor=${encodeURIComponent(auditor)}`,
+            { method: "POST" }
+          );
 
           toast(`Bin set: ${currentBin}`, "success");
 
@@ -268,10 +272,10 @@ async function startQRScan() {
 }
 
 // --------------------------------------------------
-// ITEM SCANNING (with debounce + update existing rows)
+// ITEM SCANNING (with cooldown + duplicate prevention)
 // --------------------------------------------------
 let lastScan = 0;
-const SCAN_COOLDOWN = 900;
+const SCAN_COOLDOWN = 900; // ms
 
 if (scanItemBtn) scanItemBtn.onclick = () => startContinuousItemScan();
 
@@ -310,9 +314,11 @@ async function startContinuousItemScan() {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(frame.data, frame.width, frame.height);
+        const code  = jsQR(frame.data, frame.width, frame.height);
 
         const now = Date.now();
+
+        // prevent double-reads
         if (code && code.data && now - lastScan > SCAN_COOLDOWN) {
           lastScan = now;
           flashOK();
@@ -333,7 +339,7 @@ async function startContinuousItemScan() {
 }
 
 // --------------------------------------------------
-// HANDLE ITEM SCAN (UPDATE EXISTING ROWS)
+// HANDLE ITEM SCAN (updates existing rows)
 // --------------------------------------------------
 async function handleItemScan(itemId) {
   const auditor = localStorage.getItem("auditorName") || "Unknown";
@@ -346,7 +352,7 @@ async function handleItemScan(itemId) {
     });
 
     const data = await res.json();
-    const rec = data.record || {};
+    const rec  = data.record || {};
 
     let label = "", cls = "";
 
@@ -370,7 +376,6 @@ async function handleItemScan(itemId) {
       label = data.status || "Unknown"; cls = "grey";
     }
 
-    // UPDATE EXISTING ROW IF PRESENT
     let existingRow = logTbody.querySelector(`tr[data-item="${itemId}"]`);
 
     const columns = `
@@ -381,13 +386,15 @@ async function handleItemScan(itemId) {
       <td>${rec.statusText || "-"}</td>
       <td style="display:none"></td>
       <td style="display:none"></td>
-      <td class="status-col"><span class="status-pill ${cls}">${label}</span></td>
-      <td>${data.status === "mismatch"
+      <td><span class="status-pill ${cls}">${label}</span></td>
+      <td>${
+        data.status === "mismatch"
         ? `<label><input type="checkbox"
              class="resolveToggle"
              data-bin="${currentBin}"
              data-item="${itemId}"> Move</label>`
-        : "-"}</td>
+        : "-"
+      }</td>
     `;
 
     if (existingRow) {
@@ -401,7 +408,6 @@ async function handleItemScan(itemId) {
 
   } catch (err) {
     console.error("Scan error", err);
-    toast("Scan failed", "error");
   }
 }
 
@@ -434,6 +440,7 @@ if (logTbody) {
 // --------------------------------------------------
 document.getElementById("exportVisible").onclick = () => {
   let csv = "Item ID,Scanned Bin,WH Received,Shappi Status,Audit Status,Resolved\n";
+
   [...logTbody.children].forEach(row => {
     const cells = [...row.children].map(td => td.innerText.trim());
     csv += `${cells[0]},${cells[2]},${cells[3]},${cells[4]},${cells[7]},${cells[8]}\n`;
@@ -446,11 +453,12 @@ document.getElementById("exportVisible").onclick = () => {
   a.href = url;
   a.download = `shappi_visible_results_${Date.now()}.csv`;
   a.click();
+
   URL.revokeObjectURL(url);
 };
 
 // --------------------------------------------------
-// DOWNLOAD FULL AUDIT SUMMARY
+// FULL AUDIT SUMMARY (SERVER EXPORT)
 // --------------------------------------------------
 document.getElementById("downloadAuditCsv").onclick = () => {
   window.location.href = "/export-summary";
