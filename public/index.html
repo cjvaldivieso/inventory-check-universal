@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
   <title>Shappi Inventory App</title>
   <link rel="manifest" href="manifest.json" />
 
@@ -27,11 +27,12 @@
 
     h2 {
       color: #6c47ff;
-      margin-bottom: 8px;
+      margin-bottom: 12px;
+      font-size: 26px;
     }
 
     .row {
-      margin: 10px auto;
+      margin: 12px auto;
       max-width: 900px;
     }
 
@@ -39,15 +40,38 @@
       background: #6c47ff;
       border: none;
       color: #fff;
-      border-radius: 10px;
-      padding: 10px 14px;
-      margin: 4px;
+      border-radius: 12px;
+      padding: 12px 18px;
+      margin: 6px;
       cursor: pointer;
       font-weight: 600;
+      font-size: 16px;
     }
 
-    .btn:hover {
+    .btn:hover { background: #5633d1; }
+
+    /* Upload button replacing hidden file input */
+    .csv-upload-btn {
+      background: #6c47ff;
+      border: none;
+      color: #fff;
+      border-radius: 12px;
+      padding: 12px 18px;
+      margin: 6px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 16px;
+      display: inline-block;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+
+    .csv-upload-btn:hover {
       background: #5633d1;
+    }
+
+    .csv-upload-btn:active {
+      background: #4a2cb5;
+      transform: scale(0.96);
     }
 
     table {
@@ -59,67 +83,59 @@
 
     th, td {
       border: 1px solid #3b3e7a;
-      padding: 8px;
-      font-size: 14px;
+      padding: 10px;
+      font-size: 15px;
+      word-break: break-word;
     }
 
     th {
       background: #2c2f6c;
     }
 
-    #csvTimestamp {
-      color: #6c47ff;
-      font-weight: 500;
-      margin-top: 8px;
+    #csvTimestamp { color: #6c47ff; font-weight: 500; margin-top: 8px; }
+    #csvInfo { color: #bdbde6; font-size: 13px; margin-top: 6px; }
+
+    /* Scanner overlay spacing for mobile */
+    .shappi-scan-overlay button {
+      margin-bottom: 36px !important;
     }
 
-    #csvInfo {
-      color: #bdbde6;
-      font-size: 13px;
-      margin-top: 6px;
+    .shappi-scan-overlay {
+      padding-bottom: 50px !important;
     }
-/* Hidden file input wrapper button */
-.csv-upload-btn {
-  background: #6c47ff;
-  border: none;
-  color: #fff;
-  border-radius: 10px;
-  padding: 10px 14px;
-  margin: 4px;
-  cursor: pointer;
-  font-weight: 600;
-  display: inline-block;
-  transition: background 0.15s ease-in-out, transform 0.1s;
-}
 
-/* Hover effect (same as original .btn:hover) */
-.csv-upload-btn:hover {
-  background: #5633d1;
-}
+    /* Mobile responsive */
+    @media screen and (max-width: 500px) {
+      h2 { font-size: 20px; }
 
-/* Active (pressed) effect */
-.csv-upload-btn:active {
-  background: #4a2cb5;
-  transform: scale(0.96);
-}
+      .btn, .csv-upload-btn {
+        padding: 10px 14px !important;
+        font-size: 14px !important;
+      }
+
+      table th, table td {
+        font-size: 11px !important;
+        padding: 4px !important;
+      }
+    }
   </style>
 </head>
 
 <body>
   <header>
-<img src="icons/shappi-inventory.png" alt="Shappi Logo"
-     onerror="this.src='/shappi-inventory.png'">
+    <img src="icons/shappi-inventory.png" alt="Shappi Logo"
+         onerror="this.src='shappi-inventory.png'">
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
-<!-- CSV UPLOAD -->
-<div class="row">
-  <label for="csvUpload" class="csv-upload-btn">Upload CSV</label>
-  <input type="file" id="csvUpload" accept=".csv" style="display:none" />
+  <!-- CSV UPLOAD -->
+  <div class="row">
+    <label for="csvUpload" class="csv-upload-btn">Upload CSV</label>
+    <input type="file" id="csvUpload" accept=".csv" style="display:none" />
 
-  <div id="csvInfo">No CSV uploaded yet.</div>
-  <p id="csvTimestamp">Last Updated: (none)</p>
-</div>
+    <div id="csvInfo">No CSV uploaded yet.</div>
+    <p id="csvTimestamp">Last Updated: (none)</p>
+  </div>
 
   <!-- Select User -->
   <div class="row">
@@ -139,15 +155,13 @@
     </div>
   </div>
 
-  <!-- Controls -->
+  <!-- Audit Controls -->
   <div class="row">
-    <button id="scanBinBtn"   class="btn">Scan Bin QR</button>
-    <button id="scanItemBtn"  class="btn">Scan Item QR (Continuous)</button>
-    <button id="endBinBtn"    class="btn">End Bin Audit</button>
-
-    <!-- FIXED BUTTON IDS -->
-    <button id="exportVisible"     class="btn">Export On-Screen Results</button>
-    <button id="downloadAuditCsv"  class="btn">Download Full Audit CSV</button>
+    <button id="scanBinBtn" class="btn">Scan Bin QR</button>
+    <button id="scanItemBtn" class="btn">Scan Item QR (Continuous)</button>
+    <button id="endBinBtn" class="btn">End Bin Audit</button>
+    <button id="exportVisible" class="btn">Export On-Screen Results</button>
+    <button id="downloadAuditCsv" class="btn">Download Full Audit CSV</button>
   </div>
 
   <div class="row" style="font-weight:700">
@@ -164,8 +178,8 @@
           <th>Scanned Bin</th>
           <th>WH Received</th>
           <th>Shappi Status</th>
-          <th>Category</th>
-          <th>Subcategory</th>
+          <th style="display:none">Category</th>
+          <th style="display:none">Subcategory</th>
           <th>Audit Status</th>
           <th>Resolved</th>
         </tr>
@@ -189,14 +203,12 @@
         try {
           const reg = await navigator.serviceWorker.register("/service-worker.js");
           reg.update();
-        } catch (e) {
-          console.error("SW registration failed", e);
-        }
+        } catch (e) { console.error("SW registration failed", e); }
       });
     }
   </script>
 
-  <script src="app.js?v=6"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
 
