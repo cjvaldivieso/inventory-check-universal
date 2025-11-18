@@ -1,16 +1,16 @@
-/* public/app.js — Shappi Inventory App (v3.3) */
+/* public/app.js — Shappi Inventory App (v3.4) */
 /* Includes:
- - remove-item UI
- - export visible results
- - download full audit CSV
- - hide Category + Subcategory columns
- - shrink table layout to avoid scrolling
+ - bin scanning fix (startQRScan)
+ - timestamp fix for second-user CSV visibility
  - strong debounce to prevent duplicate scans
- - update existing table rows instead of duplicating items
+ - duplicate row prevention (update existing rows)
+ - hidden Category/Subcategory
+ - export visible + full audit CSV
+ - mobile-friendly layout
 */
 
 // --------------------------------------------------
-// SOCKET + CSV META HANDLING
+// SOCKET + CSV META
 // --------------------------------------------------
 const socket = io();
 
@@ -30,11 +30,14 @@ socket.on("csvUpdated", (meta) => {
   try {
     const r = await fetch("/csv-status");
     const d = await r.json();
-    if (d && typeof d.total !== "undefined") {
+
+    if (typeof d.total !== "undefined") {
       if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${d.total})`;
-      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${d.uploadedAt}`;
+      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${d.uploadedAt || "(none)"}`;
     }
-  } catch {}
+  } catch (err) {
+    console.error("csv-status error", err);
+  }
 })();
 
 // Upload CSV handler
@@ -51,7 +54,7 @@ if (csvUpload) {
       const data = await res.json();
 
       csvInfo.textContent      = `📦 CSV Loaded (${data.total})`;
-      csvTimestamp.textContent = `Last Updated: ${data.timestamp}`;
+      csvTimestamp.textContent = `Last Updated: ${data.uploadedAt}`;
       toast(`CSV uploaded • ${data.total} items`, "success");
     } catch (err) {
       console.error("CSV upload failed", err);
@@ -78,10 +81,10 @@ function setAuditor(name) {
 
   const saved = localStorage.getItem("auditorName");
   if (saved) {
-    // Ensure dropdown option exists
     if (![...auditorSelect.options].some(o => o.value === saved)) {
       const opt = document.createElement("option");
-      opt.value = saved; opt.textContent = saved;
+      opt.value = saved;
+      opt.textContent = saved;
       auditorSelect.insertBefore(opt, auditorSelect.lastElementChild);
     }
     auditorSelect.value = saved;
@@ -93,7 +96,6 @@ function setAuditor(name) {
 if (auditorSelect) {
   auditorSelect.addEventListener("change", () => {
     const v = auditorSelect.value;
-
     if (v === "__add_new__") {
       const nn = prompt("Enter new user name:");
       if (nn) {
@@ -112,7 +114,7 @@ if (auditorSelect) {
 }
 
 // --------------------------------------------------
-// DOM Refs
+// DOM REFS
 // --------------------------------------------------
 const currentBinEl = document.getElementById("currentBin");
 const logTbody     = document.getElementById("logTbody");
@@ -124,7 +126,7 @@ let currentBin = null;
 let scanning   = false;
 
 // --------------------------------------------------
-// CAMERA PERMISSION PRELOAD
+// CAMERA PERMISSION
 // --------------------------------------------------
 (async () => {
   try {
@@ -146,7 +148,8 @@ function createOverlay() {
     position: fixed; inset: 0;
     background: rgba(0,0,0,0.92);
     display: flex; flex-direction: column;
-    align-items: center; justify-content: flex-start;
+    align-items: center;
+    justify-content: flex-start;
     padding-top: 40px;
     padding-bottom: 80px;
     z-index: 9999;
@@ -192,16 +195,18 @@ function createOverlay() {
 }
 
 let activeStream = null;
+
 function stopAnyOpenScanner() {
   try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch {}
   activeStream = null;
-
   document.querySelectorAll(".shappi-scan-overlay").forEach(el => el.remove());
 }
 
 // --------------------------------------------------
-// BIN SCAN
+// BIN SCAN (FIXED — NO ARGUMENTS)
 // --------------------------------------------------
+if (scanBinBtn) scanBinBtn.onclick = () => startQRScan();
+
 async function startQRScan() {
   const { overlay, video, stopBtn } = createOverlay();
 
@@ -233,23 +238,28 @@ async function startQRScan() {
           flashOK();
           currentBin = code.data.trim();
           currentBinEl.textContent = currentBin;
+
           overlay.remove();
           stopAnyOpenScanner();
 
           const auditor = localStorage.getItem("auditorName") || "Unknown";
+
           await fetch(`/audit/start/${encodeURIComponent(currentBin)}?auditor=${encodeURIComponent(auditor)}`, {
             method: "POST"
           });
 
           toast(`Bin set: ${currentBin}`, "success");
+
           startContinuousItemScan();
           return;
         }
       }
+
       requestAnimationFrame(loop);
     };
 
     loop();
+
   } catch (err) {
     console.error("Camera error", err);
     toast("Camera access denied", "error");
@@ -258,10 +268,12 @@ async function startQRScan() {
 }
 
 // --------------------------------------------------
-// ITEM SCAN (CONTINUOUS) — WITH DEBOUNCE + ROW UPDATE
+// ITEM SCANNING (with debounce + update existing rows)
 // --------------------------------------------------
 let lastScan = 0;
-const SCAN_COOLDOWN = 900; // ms
+const SCAN_COOLDOWN = 900;
+
+if (scanItemBtn) scanItemBtn.onclick = () => startContinuousItemScan();
 
 async function startContinuousItemScan() {
   if (!currentBin) return toast("Scan a Bin QR first.", "warn");
@@ -307,10 +319,12 @@ async function startContinuousItemScan() {
           await handleItemScan(code.data.trim());
         }
       }
+
       requestAnimationFrame(loop);
     };
 
     loop();
+
   } catch (err) {
     console.error("Camera error", err);
     scanning = false;
@@ -319,7 +333,7 @@ async function startContinuousItemScan() {
 }
 
 // --------------------------------------------------
-// SCAN HANDLER — UPDATES EXISTING ROWS
+// HANDLE ITEM SCAN (UPDATE EXISTING ROWS)
 // --------------------------------------------------
 async function handleItemScan(itemId) {
   const auditor = localStorage.getItem("auditorName") || "Unknown";
@@ -334,15 +348,15 @@ async function handleItemScan(itemId) {
     const data = await res.json();
     const rec = data.record || {};
 
-    // compute UI label + color
     let label = "", cls = "";
+
     if (data.status === "match") {
       label = "Correct Bin"; cls = "green";
-      toast(`✓ ${itemId} in correct bin`, "success");
+      toast(`✓ ${itemId} correct`, "success");
 
     } else if (data.status === "mismatch") {
-      label = `Wrong Bin → Move to ${data.correctBin}`; cls = "yellow";
-      toast(`Move ${itemId} to ${data.correctBin}`, "warn");
+      label = `Move → ${data.correctBin}`; cls = "yellow";
+      toast(`Move ${itemId} → ${data.correctBin}`, "warn");
 
     } else if (data.status === "no-bin") {
       label = "Not in CSV"; cls = "red";
@@ -356,51 +370,34 @@ async function handleItemScan(itemId) {
       label = data.status || "Unknown"; cls = "grey";
     }
 
-    // ---------------------------------------------
-    // UPDATE OR INSERT ROW
-    // ---------------------------------------------
+    // UPDATE EXISTING ROW IF PRESENT
     let existingRow = logTbody.querySelector(`tr[data-item="${itemId}"]`);
 
-    if (existingRow) {
-      // update status only
-      existingRow.querySelector(".status-col").innerHTML =
-        `<span class="status-pill ${cls}">${label}</span>`;
-      return;
-    }
-
-    // create new row
-    const tr = document.createElement("tr");
-    tr.dataset.item = itemId;
-
-    tr.innerHTML = `
+    const columns = `
       <td>${itemId}</td>
       <td style="display:none"></td>
       <td>${currentBin}</td>
       <td>${rec.received || "-"}</td>
       <td>${rec.statusText || "-"}</td>
-      <td style="display:none">${rec.category || "-"}</td>
-      <td style="display:none">${rec.subcategory || "-"}</td>
-
-      <td class="status-col">
-        <span class="status-pill ${cls}">${label}</span>
-      </td>
-
-      <td>
-        ${
-          data.status === "mismatch"
-            ? `<label style="cursor:pointer;">
-                <input type="checkbox"
-                       data-bin="${currentBin}"
-                       data-item="${itemId}"
-                       class="resolveToggle">
-                Mark Moved
-               </label>`
-            : "-"
-        }
-      </td>
+      <td style="display:none"></td>
+      <td style="display:none"></td>
+      <td class="status-col"><span class="status-pill ${cls}">${label}</span></td>
+      <td>${data.status === "mismatch"
+        ? `<label><input type="checkbox"
+             class="resolveToggle"
+             data-bin="${currentBin}"
+             data-item="${itemId}"> Move</label>`
+        : "-"}</td>
     `;
 
-    logTbody.prepend(tr);
+    if (existingRow) {
+      existingRow.innerHTML = columns;
+    } else {
+      const tr = document.createElement("tr");
+      tr.dataset.item = itemId;
+      tr.innerHTML = columns;
+      logTbody.prepend(tr);
+    }
 
   } catch (err) {
     console.error("Scan error", err);
@@ -426,34 +423,25 @@ if (logTbody) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ binId, itemId, resolved })
       });
-    } catch (err) {
-      console.error("Resolve update failed", err);
+    } catch {
       toast("Failed to update resolve state", "error");
     }
   });
 }
 
-// Sync when server updates item resolution
-socket.on("itemResolved", ({ binId, itemId, resolved }) => {
-  const cb = logTbody.querySelector(
-    `input.resolveToggle[data-bin="${binId}"][data-item="${itemId}"]`
-  );
-  if (cb) cb.checked = !!resolved;
-});
-
 // --------------------------------------------------
-// EXPORT VISIBLE (ON-SCREEN)
+// EXPORT VISIBLE ROWS
 // --------------------------------------------------
 document.getElementById("exportVisible").onclick = () => {
   let csv = "Item ID,Scanned Bin,WH Received,Shappi Status,Audit Status,Resolved\n";
-
   [...logTbody.children].forEach(row => {
-    const cols = [...row.children].map(td => td.innerText.trim());
-    csv += `${cols[0]},${cols[2]},${cols[3]},${cols[4]},${cols[7]},${cols[8]}\n`;
+    const cells = [...row.children].map(td => td.innerText.trim());
+    csv += `${cells[0]},${cells[2]},${cells[3]},${cells[4]},${cells[7]},${cells[8]}\n`;
   });
 
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
+
   const a = document.createElement("a");
   a.href = url;
   a.download = `shappi_visible_results_${Date.now()}.csv`;
@@ -462,14 +450,14 @@ document.getElementById("exportVisible").onclick = () => {
 };
 
 // --------------------------------------------------
-// DOWNLOAD FULL AUDIT CSV
+// DOWNLOAD FULL AUDIT SUMMARY
 // --------------------------------------------------
 document.getElementById("downloadAuditCsv").onclick = () => {
   window.location.href = "/export-summary";
 };
 
 // --------------------------------------------------
-// FLASH OK EFFECT
+// FLASH OK VISUAL
 // --------------------------------------------------
 function flashOK() {
   const flash = document.createElement("div");
