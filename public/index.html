@@ -118,13 +118,48 @@
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
-  <!-- CSV UPLOAD -->
-  <div class="row">
-    <label for="csvUpload" class="csv-upload-btn">Upload CSV</label>
-    <input type="file" id="csvUpload" accept=".csv" style="display:none" />
-    <div id="csvInfo">No CSV uploaded yet.</div>
-    <p id="csvTimestamp">Last Updated: (none)</p>
-  </div>
+<!-- CSV UPLOAD -->
+<div class="row">
+  <input 
+    type="file" 
+    id="csvUpload" 
+    accept=".csv"
+    class="csv-button"
+  />
+
+  <div id="csvInfo">No CSV uploaded yet.</div>
+  <p id="csvTimestamp">Last Updated: (none)</p>
+</div>
+
+<style>
+/* iOS–SAFE upload button */
+.csv-button {
+  background: #6c47ff;
+  border: none;
+  color: #fff;
+  border-radius: 10px;
+  padding: 12px 18px;
+  margin: 4px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 16px;
+
+  /* BIG FIX — must not be hidden */
+  display: inline-block !important;
+  opacity: 1 !important;
+  position: relative !important;
+  z-index: 10;
+}
+
+.csv-button:hover {
+  background: #5633d1;
+}
+
+.csv-button:active {
+  background: #4a2cb5;
+  transform: scale(0.96);
+}
+</style>
 
   <!-- Auditor -->
   <div class="row">
@@ -136,7 +171,6 @@
       <option>CJ</option>
       <option>Eric</option>
       <option>Greg</option>
-      <option>Justin</option>
       <option value="__add_new__">+ Add New User</option>
     </select>
 
