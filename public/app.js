@@ -20,6 +20,14 @@ const csvInfo      = document.getElementById("csvInfo");
 const csvTimestamp = document.getElementById("csvTimestamp");
 const csvUpload    = document.getElementById("csvUpload");
 
+// CHROME DESKTOP SAFE — trigger hidden file input
+const triggerCsvUpload = document.getElementById("triggerCsvUpload");
+if (triggerCsvUpload && csvUpload) {
+  triggerCsvUpload.addEventListener("click", () => {
+    csvUpload.click();   // programmatically opens file chooser
+  });
+}
+
 const auditorSelect  = document.getElementById("auditorSelect");
 const auditorDisplay = document.getElementById("currentAuditorDisplay");
 
