@@ -106,16 +106,31 @@
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
-  <!-- CSV UPLOAD (fixed for iPhone & Safari) -->
-  <div class="row">
-    <label class="btn" id="csvUploadLabel">
-      Upload CSV
-      <input type="file" id="csvUpload" accept=".csv" />
-    </label>
+<!-- CSV UPLOAD -->
+<div class="row">
+  <!-- Real file input (visible but styled tiny & transparent to avoid iOS blocking) -->
+  <input 
+    type="file" 
+    id="csvUpload" 
+    accept=".csv" 
+    style="
+      position: absolute;
+      opacity: 0;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      z-index: -1;
+    "
+  />
 
-    <div id="csvInfo">No CSV uploaded yet.</div>
-    <p id="csvTimestamp">Last Updated: (none)</p>
-  </div>
+  <!-- Button that triggers the hidden input -->
+  <label for="csvUpload" class="btn" style="display:inline-block; margin-bottom:6px;">
+    Upload CSV
+  </label>
+
+  <div id="csvInfo">No CSV uploaded yet.</div>
+  <p id="csvTimestamp">Last Updated: (none)</p>
+</div>
 
   <!-- Select User -->
   <div class="row">
