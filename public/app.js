@@ -274,11 +274,11 @@ async function startQRScan() {
   }
 }
 
-// --------------------------------------------------
-// ITEM SCANNING (debounced)
-// --------------------------------------------------
+// -------------------------------------------------------------
+// ITEM SCANNING (Fully Fixed – Working on iOS, Android, Desktop)
+// -------------------------------------------------------------
 let lastScanTime = 0;
-const COOLDOWN = 900;
+const COOLDOWN = 900; // ms
 
 if (scanItemBtn) scanItemBtn.onclick = () => startContinuousItemScan();
 
@@ -290,6 +290,8 @@ async function startContinuousItemScan() {
   if (scanning) return;
 
   scanning = true;
+
+  stopScanner(); // important reset
   const { overlay, video, stopBtn } = createOverlay();
   let stopped = false;
 
@@ -302,30 +304,36 @@ async function startContinuousItemScan() {
   };
 
   try {
+    // Start camera
     activeStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: "environment" }
     });
     video.srcObject = activeStream;
     await video.play();
 
+    // Canvas for frame capture
     const canvas = document.createElement("canvas");
     const ctx = canvas.getContext("2d");
 
+    // Frame loop
     const tick = async () => {
       if (stopped || !scanning) return;
 
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width  = video.videoWidth;
+        canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
-        ctx.drawImage(video,0,0,canvas.width,canvas.height);
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        const frame = ctx.getImageData(0,0,canvas.width,canvas.height);
-        const code  = jsQR(frame.data, frame.width, frame.height);
+        // Extract QR
+        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(frame.data, frame.width, frame.height);
 
         const now = Date.now();
 
+        // Only trigger if QR is detected AND cooldown passed
         if (code && code.data && now - lastScanTime > COOLDOWN) {
           lastScanTime = now;
+          flashOK();
           await handleItemScan(code.data.trim());
         }
       }
@@ -338,8 +346,12 @@ async function startContinuousItemScan() {
   } catch (err) {
     console.error("Camera error", err);
     toast("Camera error", "error");
+    scanning = false;
+    stopScanner();
+    overlay.remove();
   }
 }
+
 
 // --------------------------------------------------
 // HANDLE ITEM SCAN — update or insert single row
