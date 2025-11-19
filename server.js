@@ -1,12 +1,6 @@
-/* ================================================
-   SHAPPI INVENTORY APP — SERVER (v4.0)
-   Fully Bundled:
-   - CSV persistence
-   - Bin validation
-   - Audit system
-   - Scan dedupe
-   - Mobile-safe endpoints
-================================================ */
+// -------------------------------
+// Shappi Inventory Backend v4.0
+// -------------------------------
 
 import express from "express";
 import multer from "multer";
@@ -17,289 +11,197 @@ import http from "http";
 import { Server } from "socket.io";
 import moment from "moment-timezone";
 
+// -----------------------------------------------------
+// AUTO-CREATE REQUIRED FOLDERS (Fixes Render CSV crash)
+// -----------------------------------------------------
+if (!fs.existsSync("data")) {
+  fs.mkdirSync("data", { recursive: true });
+}
+if (!fs.existsSync("uploads")) {
+  fs.mkdirSync("uploads", { recursive: true });
+}
+
+// -----------------------------------------------------
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static("public"));
 
-// Static files (no cache)
-app.use(express.static("public", {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith(".html") || filePath.endsWith(".js") || filePath.endsWith(".css")) {
-      res.setHeader("Cache-Control", "no-store");
-    }
-  }
-}));
+const PORT = process.env.PORT || 10000;
 
-// --------------------------------------------------
-// GLOBAL STATE
-// --------------------------------------------------
-global.csvData = [];
-global.csvUploadedAt = null;
-global.validBins = new Set();
+// CSV storage
+let csvMap = new Map(); // itemId → row
+let csvBins = new Set(); // valid bin list
 
-let audits = {}; // { binId: { auditor, startTime, items: [...] } }
-
+// -----------------------------------------------------
+// Multer upload storage
+// -----------------------------------------------------
 const upload = multer({ dest: "uploads/" });
 
+// -----------------------------------------------------
+// Helper: Load CSV into memory + update metadata
+// -----------------------------------------------------
+async function loadCsvToMemory(filePath) {
+  return new Promise((resolve, reject) => {
+    const tempMap = new Map();
+    const bins = new Set();
 
-// --------------------------------------------------
-// LOAD PERSISTED CSV METADATA ON STARTUP
-// --------------------------------------------------
-try {
-  if (fs.existsSync("data/csv-meta.json")) {
-    const meta = JSON.parse(fs.readFileSync("data/csv-meta.json"));
-    global.csvUploadedAt = meta.uploadedAt;
-  }
-} catch {}
+    fs.createReadStream(filePath)
+      .pipe(csv())
+      .on("data", (row) => {
+        const itemId = String(row.ItemID || row.itemId || "").trim();
+        const bin = String(row.ExpectedBin || row.expectedBin || "").trim().toUpperCase();
 
+        if (itemId) {
+          tempMap.set(itemId, {
+            received: row.Received || row.received || "-",
+            statusText: row.Status || row.statusText || "-",
+            expectedBin: bin || "-",
+            category: row.Category || "",
+            subcategory: row.Subcategory || ""
+          });
+        }
 
-// --------------------------------------------------
-// CSV UPLOAD
-// --------------------------------------------------
-app.post("/upload-csv", upload.single("file"), (req, res) => {
-  const rows = [];
-  const timestamp = moment().tz("America/New_York").format("MM/DD/YYYY hh:mm A");
+        if (bin) bins.add(bin);
+      })
+      .on("end", () => {
+        csvMap = tempMap;
+        csvBins = bins;
 
-  fs.createReadStream(req.file.path)
-    .pipe(csv())
-    .on("data", (row) => {
-      rows.push({
-        itemId: (row["Item ID"] || "").trim().toUpperCase(),
-        bin: (row["Warehouse Bin ID"] || "").trim().toUpperCase(),
-        received: (row["Received At Warehouse"] || "").trim(),
-        status: (row["Status"] || "").trim(),
-        category: (row["Category"] || "").trim(),
-        subcategory: (row["Subcategory"] || "").trim()
-      });
-    })
-    .on("end", () => {
-      try { fs.unlinkSync(req.file.path); } catch {}
+        const meta = {
+          total: csvMap.size,
+          uploadedAt: moment().tz("America/New_York").format("MMM DD, YYYY HH:mm")
+        };
 
-      global.csvData = rows;
-      global.csvUploadedAt = timestamp;
+        fs.writeFileSync("data/csv-meta.json", JSON.stringify(meta, null, 2));
 
-      // Build valid bin set
-      global.validBins = new Set(rows.map(r => r.bin).filter(b => b));
-
-      // Persist metadata
-      fs.writeFileSync("data/csv-meta.json", JSON.stringify({
-        uploadedAt: timestamp,
-        total: rows.length
-      }, null, 2));
-
-      io.emit("csvUpdated", {
-        total: rows.length,
-        uploadedAt: timestamp,
-        bins: [...global.validBins]
-      });
-
-      res.json({
-        total: rows.length,
-        uploadedAt: timestamp,
-        bins: [...global.validBins]
-      });
-    });
-});
-
-
-// --------------------------------------------------
-// CSV STATUS (visible on load for EVERY user)
-// --------------------------------------------------
-app.get("/csv-status", (req, res) => {
-  let meta = {};
-  try {
-    meta = JSON.parse(fs.readFileSync("data/csv-meta.json"));
-  } catch {
-    meta = { uploadedAt: null, total: 0 };
-  }
-
-  res.json({
-    total: meta.total || global.csvData.length,
-    uploadedAt: meta.uploadedAt,
-    bins: [...global.validBins]
+        resolve(meta);
+      })
+      .on("error", reject);
   });
+}
+
+// -----------------------------------------------------
+// Upload CSV
+// -----------------------------------------------------
+app.post("/upload-csv", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No CSV uploaded" });
+
+    const meta = await loadCsvToMemory(req.file.path);
+
+    io.emit("csvUpdated", meta);
+
+    res.json(meta);
+  } catch (err) {
+    console.error("CSV upload failed", err);
+    res.status(500).json({ error: "Failed to process CSV" });
+  }
 });
 
+// -----------------------------------------------------
+// CSV status endpoint (Fix for second-user timestamp)
+// -----------------------------------------------------
+app.get("/csv-status", (req, res) => {
+  try {
+    if (fs.existsSync("data/csv-meta.json")) {
+      const meta = JSON.parse(fs.readFileSync("data/csv-meta.json"));
+      meta.total = csvMap.size;
+      return res.json(meta);
+    }
 
-// --------------------------------------------------
-// AUDIT: START
-// --------------------------------------------------
-app.post("/audit/start/:binId", (req, res) => {
-  let bin = req.params.binId.trim().toUpperCase();
-  const auditor = (req.query.auditor || "Unknown").toString();
+    res.json({ total: 0, uploadedAt: null });
+  } catch (err) {
+    console.error("CSV-status error", err);
+    res.json({ total: 0, uploadedAt: null });
+  }
+});
 
-  // BIN VALIDATION
-  if (!/^[A-Z]{3}$/.test(bin)) {
-    return res.status(400).json({ error: "Invalid Bin Format. Must be 3 letters." });
+// -----------------------------------------------------
+// Start audit for a bin (validate 3-letter + exists in CSV)
+// -----------------------------------------------------
+app.post("/audit/start/:bin", (req, res) => {
+  const auditor = req.query.auditor || "Unknown";
+  const rawBin = req.params.bin.trim().toUpperCase();
+
+  if (!/^[A-Z]{3}$/.test(rawBin)) {
+    return res.status(400).json({ error: "Invalid bin format. Must be 3 letters." });
   }
 
-  if (!global.validBins.has(bin)) {
+  if (!csvBins.has(rawBin)) {
     return res.status(400).json({ error: "Bin not found in CSV." });
   }
 
-  audits[bin] = {
-    auditor,
-    startTime: new Date().toISOString(),
-    endTime: null,
-    items: [] // { itemId, status, resolved, ... }
-  };
-
-  io.emit("auditStarted", { bin, auditor });
-  res.json({ message: `Audit started for ${bin}`, auditor });
+  console.log(`Audit started for BIN ${rawBin} by ${auditor}`);
+  res.json({ ok: true });
 });
 
-
-// --------------------------------------------------
-// AUDIT: SCAN ITEM
-// --------------------------------------------------
+// -----------------------------------------------------
+// Scan an item
+// -----------------------------------------------------
 app.post("/audit/scan", (req, res) => {
-  const { binId, itemId } = req.body;
+  const { itemId, binId } = req.body;
   const auditor = req.query.auditor || "Unknown";
 
-  if (!binId || !itemId)
-    return res.status(400).json({ error: "Missing binId or itemId" });
+  const record = csvMap.get(itemId);
 
-  const bin = binId.toUpperCase();
-  const item = itemId.trim().toUpperCase();
+  if (!record) {
+    return res.json({
+      status: "no-bin",
+      record: {}
+    });
+  }
 
-  if (!audits[bin])
-    return res.status(400).json({ error: "No active audit for this bin" });
+  let status = "";
 
-  const csvItem = global.csvData.find(r => r.itemId === item);
-
-  let status = "match";
-  let expectedBin = csvItem?.bin || "-";
-
-  if (!csvItem) {
+  if (!record.expectedBin || record.expectedBin === "-") {
     status = "no-bin";
-  } else if (expectedBin !== bin) {
+  } else if (record.expectedBin === binId) {
+    status = "match";
+  } else if (record.statusText?.toLowerCase().includes("canceled")) {
+    status = "remove-item";
+  } else {
     status = "mismatch";
   }
 
-  if (
-    csvItem &&
-    ["SHAPPI CLOSED", "SHAPPI CANCELED", "ABANDONED"].includes(csvItem.status.toUpperCase())
-  ) {
-    status = "remove-item";
-  }
-
-  // DEDUPE SCANS (server-side)
-  const existing = audits[bin].items.find(i => i.itemId === item);
-  if (existing) {
-    existing.status = status;
-    existing.ts = new Date().toISOString();
-  } else {
-    audits[bin].items.unshift({
-      itemId: item,
-      expectedBin,
-      scannedBin: bin,
-      status,
-      resolved: false,
-      ts: new Date().toISOString()
-    });
-  }
-
-  return res.json({
+  res.json({
     status,
-    correctBin: expectedBin !== "-" ? expectedBin : null,
-    record: csvItem || null
+    correctBin: record.expectedBin,
+    record
   });
 });
 
-
-// --------------------------------------------------
-// AUDIT: RESOLVE ITEM
-// --------------------------------------------------
+// -----------------------------------------------------
+// Resolve mismatch toggle
+// -----------------------------------------------------
 app.post("/audit/resolve", (req, res) => {
-  const { binId, itemId, resolved } = req.body;
+  const { itemId, resolved } = req.body;
+  console.log(`Resolved toggle → ${itemId}: ${resolved}`);
+  io.emit("itemResolved", { itemId, resolved });
 
-  const audit = audits[binId];
-  if (!audit) return res.status(404).json({ error: "Audit not found" });
-
-  const item = audit.items.find(i => i.itemId === itemId);
-  if (!item) return res.status(404).json({ error: "Item not found" });
-
-  item.resolved = !!resolved;
-
-  io.emit("itemResolved", { binId, itemId, resolved: !!resolved });
-  res.json({ success: true });
+  res.json({ ok: true });
 });
 
-
-// --------------------------------------------------
-// AUDIT: END
-// --------------------------------------------------
-app.post("/audit/end/:binId", (req, res) => {
-  const bin = req.params.binId;
-
-  if (!audits[bin]) return res.status(404).json({ error: "No active audit" });
-
-  audits[bin].endTime = new Date().toISOString();
-
-  io.emit("auditEnded", { bin, endTime: audits[bin].endTime });
-
-  res.json({ message: `Audit completed for ${bin}` });
-});
-
-
-// --------------------------------------------------
-// EXPORT FULL SUMMARY (CSV)
-// --------------------------------------------------
+// -----------------------------------------------------
+// Export full audit summary
+// -----------------------------------------------------
 app.get("/export-summary", (req, res) => {
-  if (!Object.keys(audits).length)
-    return res.status(400).json({ error: "No audits to export" });
+  let csvText = "Item ID,Expected Bin,Received,Status,Category,Subcategory\n";
 
-  const rows = [
-    [
-      "Bin ID","Auditor","Audit Status","# Items","Accuracy %",
-      "Start Time","End Time",
-      "Item ID","Expected Bin","Scanned Bin",
-      "Item Status","Resolved","Timestamp"
-    ]
-  ];
+  csvMap.forEach((row, id) => {
+    csvText += `${id},${row.expectedBin},${row.received},${row.statusText},${row.category},${row.subcategory}\n`;
+  });
 
-  for (const [bin, audit] of Object.entries(audits)) {
-    const total = audit.items.length;
-    const correct = audit.items.filter(i => i.status === "match").length;
-    const accuracy = total ? Math.round((correct / total) * 100) : 0;
-    const statusLabel = audit.endTime ? "Completed" : "In Progress";
-
-    audit.items.forEach(i => {
-      rows.push([
-        bin,
-        audit.auditor,
-        statusLabel,
-        total,
-        accuracy,
-        audit.startTime,
-        audit.endTime || "-",
-        i.itemId,
-        i.expectedBin,
-        i.scannedBin,
-        i.status,
-        i.resolved ? "Yes" : "No",
-        i.ts
-      ]);
-    });
-  }
-
-  const csv = rows.map(r => r.join(",")).join("\n");
-
-  res.header("Content-Type", "text/csv");
-  res.attachment(`shappi_audit_summary_${Date.now()}.csv`);
-  res.send(csv);
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", "attachment; filename=audit_summary.csv");
+  res.send(csvText);
 });
 
-
-// --------------------------------------------------
-// SERVER START
-// --------------------------------------------------
-io.on("connection", () => {});
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () =>
-  console.log(`🚀 Shappi Inventory Backend v4.0 running on ${PORT}`)
-);
+// -----------------------------------------------------
+server.listen(PORT, () => {
+  console.log(`🚀 Shappi Inventory Backend v4.0 running on ${PORT}`);
+});
 

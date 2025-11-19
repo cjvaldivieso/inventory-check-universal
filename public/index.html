@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Shappi Inventory App</title>
-
   <link rel="manifest" href="manifest.json" />
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
 
@@ -44,32 +44,28 @@
       margin: 4px;
       cursor: pointer;
       font-weight: 600;
+      display: inline-block;
+      text-align: center;
     }
 
     .btn:hover {
       background: #5633d1;
     }
 
-    .csv-upload-btn {
-      background: #6c47ff;
-      border: none;
-      color: #fff;
-      border-radius: 10px;
-      padding: 10px 14px;
-      margin: 4px;
+    /* FIXED CSV UPLOAD BUTTON */
+    #csvUploadLabel {
+      position: relative;
+      overflow: hidden;
+    }
+
+    #csvUploadLabel input[type="file"] {
+      position: absolute;
+      left: 0;
+      top: 0;
+      opacity: 0;
       cursor: pointer;
-      font-weight: 600;
-      transition: background 0.15s ease-in-out, transform 0.1s;
-      display: inline-block;
-    }
-
-    .csv-upload-btn:hover {
-      background: #5633d1;
-    }
-
-    .csv-upload-btn:active {
-      background: #4a2cb5;
-      transform: scale(0.96);
+      height: 100%;
+      width: 100%;
     }
 
     table {
@@ -77,14 +73,12 @@
       border-collapse: collapse;
       width: 95%;
       max-width: 980px;
-      overflow-x: auto;
-      display: block;
     }
 
     th, td {
       border: 1px solid #3b3e7a;
       padding: 8px;
-      font-size: 13px;
+      font-size: 14px;
     }
 
     th {
@@ -107,16 +101,17 @@
 
 <body>
   <header>
-    <img src="icons/shappi-inventory.png"
-         onerror="this.src='shappi-inventory.png'"
-         alt="Shappi Logo">
+    <img src="icons/shappi-inventory.png" alt="Shappi Logo"
+         onerror="this.src='shappi-inventory.png'">
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
-  <!-- CSV Upload -->
+  <!-- CSV UPLOAD (fixed for iPhone & Safari) -->
   <div class="row">
-    <label for="csvUpload" class="csv-upload-btn">Upload CSV</label>
-    <input type="file" id="csvUpload" accept=".csv" style="display:none" />
+    <label class="btn" id="csvUploadLabel">
+      Upload CSV
+      <input type="file" id="csvUpload" accept=".csv" />
+    </label>
 
     <div id="csvInfo">No CSV uploaded yet.</div>
     <p id="csvTimestamp">Last Updated: (none)</p>
@@ -124,8 +119,7 @@
 
   <!-- Select User -->
   <div class="row">
-    <label><b>Select User:</b></label>
-
+    <label for="auditorSelect"><b>Select User:</b></label>
     <select id="auditorSelect" class="btn" style="padding:8px 10px">
       <option value="">-- Choose Your Name --</option>
       <option>Anslee</option>
@@ -133,6 +127,7 @@
       <option>CJ</option>
       <option>Eric</option>
       <option>Greg</option>
+      <option>Justin</option>
       <option value="__add_new__">+ Add New User</option>
     </select>
 
@@ -144,15 +139,14 @@
 
   <!-- Controls -->
   <div class="row">
-    <button id="scanBinBtn" class="btn">Scan Bin QR</button>
-    <button id="scanItemBtn" class="btn">Scan Item QR (Continuous)</button>
-    <button id="endBinBtn" class="btn">End Bin Audit</button>
+    <button id="scanBinBtn"   class="btn">Scan Bin QR</button>
+    <button id="scanItemBtn"  class="btn">Scan Item QR (Continuous)</button>
+    <button id="endBinBtn"    class="btn">End Bin Audit</button>
 
-    <button id="exportVisible" class="btn">Export On-Screen Results</button>
+    <button id="exportVisible"    class="btn">Export On-Screen Results</button>
     <button id="downloadAuditCsv" class="btn">Download Full Audit CSV</button>
   </div>
 
-  <!-- Current Bin -->
   <div class="row" style="font-weight:700">
     Current Bin: <span id="currentBin">None</span>
   </div>
@@ -163,12 +157,12 @@
       <thead>
         <tr>
           <th>Item ID</th>
-          <th style="display:none;">Expected Bin</th>
+          <th>Expected Bin</th>
           <th>Scanned Bin</th>
           <th>WH Received</th>
           <th>Shappi Status</th>
-          <th style="display:none;">Category</th>
-          <th style="display:none;">Subcategory</th>
+          <th style="display:none">Category</th>
+          <th style="display:none">Subcategory</th>
           <th>Audit Status</th>
           <th>Resolved</th>
         </tr>
@@ -179,27 +173,27 @@
 
   <!-- Toast -->
   <div id="toast" style="
-      position: fixed; left: 50%; bottom: 24px;
-      transform: translateX(-50%);
-      background: #1e293b; color: #fff;
-      border: 1px solid #6c47ff;
+      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+      background: #1e293b; color: #fff; border: 1px solid #6c47ff;
       padding: 10px 14px; border-radius: 10px;
       display: none; z-index: 99999;">
   </div>
 
-  <!-- Service Worker -->
+  <!-- Service worker -->
   <script>
     if ("serviceWorker" in navigator) {
       window.addEventListener("load", async () => {
         try {
           const reg = await navigator.serviceWorker.register("/service-worker.js");
           reg.update();
-        } catch (e) {}
+        } catch (e) {
+          console.error("SW registration failed", e);
+        }
       });
     }
   </script>
 
-  <script src="app.js?v=10"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
 
