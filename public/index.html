@@ -2,91 +2,49 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Shappi Inventory App</title>
 
-  <!-- Manifest + QR + Socket -->
-  <link rel="manifest" href="manifest.json" />
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
 
   <style>
-    /* GLOBAL */
     body {
       font-family: Helvetica, Arial, sans-serif;
       background: #0B0C2A;
       color: #fff;
       margin: 0;
-      padding: 0;
       text-align: center;
     }
 
-    header img {
-      height: 64px;
-      margin: 16px auto 4px;
-      display: block;
-    }
-
-    h2 {
-      color: #6c47ff;
-      margin-bottom: 8px;
-    }
-
-    .row {
-      margin: 12px auto;
-      max-width: 900px;
-    }
-
-    /* BUTTONS */
     .btn {
       background: #6c47ff;
       border: none;
       color: #fff;
       border-radius: 10px;
       padding: 10px 14px;
-      margin: 4px;
-      cursor: pointer;
+      margin: 6px;
       font-weight: 600;
-      display: inline-block;
+      cursor: pointer;
     }
 
     .btn:hover {
       background: #5633d1;
     }
 
-    /* CSV UPLOAD BUTTON (label trigger) */
     #csvUpload {
-      display: none !important;
-    }
-
-    .csv-upload-btn {
+      color: #fff;
       background: #6c47ff;
       border-radius: 10px;
-      padding: 10px 14px;
-      margin: 4px;
-      cursor: pointer;
-      font-weight: 600;
-      display: inline-block;
-      transition: background 0.12s ease-in-out, transform 0.1s ease-in-out;
+      padding: 10px;
+      width: 210px;
     }
 
-    .csv-upload-btn:hover {
-      background: #5633d1;
-    }
-
-    .csv-upload-btn:active {
-      background: #4a2cb5;
-      transform: scale(0.96);
-    }
-
-    /* TABLE */
     table {
-      margin: 16px auto;
-      border-collapse: collapse;
       width: 95%;
-      background: #1A1B3A;
-      border-radius: 12px;
-      overflow: hidden;
+      max-width: 980px;
+      margin: 20px auto;
+      border-collapse: collapse;
     }
 
     th, td {
@@ -97,116 +55,68 @@
 
     th {
       background: #2c2f6c;
-      font-size: 14px;
-    }
-
-    /* HIDE COLUMNS (Category + Subcategory + Expected Bin) */
-    th:nth-child(2),
-    td:nth-child(2),
-    th:nth-child(6),
-    td:nth-child(6),
-    th:nth-child(7),
-    td:nth-child(7) {
-      display: none !important;
-    }
-
-    /* CURRENT AUDITOR */
-    #currentAuditorDisplay {
-      margin-top: 8px;
-      font-weight: 700;
-      color: #6c47ff;
-    }
-
-    /* TOAST */
-    #toast {
-      position: fixed;
-      left: 50%;
-      bottom: 24px;
-      transform: translateX(-50%);
-      background: #1e293b;
-      color: #fff;
-      border: 1px solid #6c47ff;
-      padding: 10px 14px;
-      border-radius: 10px;
-      display: none;
-      z-index: 99999;
-      max-width: 90%;
     }
   </style>
 </head>
-
 <body>
-  <header>
-    <img src="icons/shappi-inventory.png" alt="Shappi Logo"
-         onerror="this.src='shappi-inventory.png'">
-    <h2>📦 Shappi Inventory App</h2>
-  </header>
 
-  <!-- CSV UPLOAD -->
+  <h2>📦 Shappi Inventory App</h2>
+
   <div class="row">
-    <label for="csvUpload" class="csv-upload-btn">Upload CSV</label>
     <input type="file" id="csvUpload" accept=".csv" />
-
-    <div id="csvInfo">No CSV uploaded yet.</div>
-    <p id="csvTimestamp">Last Updated: (none)</p>
+    <div id="csvInfo">No CSV uploaded.</div>
+    <div id="csvTimestamp">Last Updated: (none)</div>
   </div>
 
-  <!-- USER SELECT -->
-  <div class="row">
-    <label for="auditorSelect"><b>Select User:</b></label>
-    <select id="auditorSelect" class="btn" style="padding:8px 10px">
-      <option value="">-- Choose Your Name --</option>
-      <option>Anslee</option>
-      <option>Caz</option>
+  <div>
+    <label><b>Select User:</b></label>
+    <select id="auditorSelect" class="btn">
+      <option value="">-- Pick User --</option>
       <option>CJ</option>
-      <option>Eric</option>
       <option>Greg</option>
+      <option>Eric</option>
       <option>Justin</option>
-      <option value="__add_new__">+ Add New User</option>
+      <option>Anslee</option>
+      <option value="__add_new__">+ Add New</option>
     </select>
-
-    <div id="currentAuditorDisplay">
-      Current User: <span id="currentAuditor">None</span>
-    </div>
+    <div id="currentAuditorDisplay" style="margin-top:10px">Current: None</div>
   </div>
 
-  <!-- CONTROLS -->
-  <div class="row">
-    <button id="scanBinBtn" class="btn">Scan Bin QR</button>
-    <button id="scanItemBtn" class="btn">Scan Item QR (Continuous)</button>
-    <button id="endBinBtn" class="btn">End Bin Audit</button>
-    <button id="exportVisible" class="btn">Export On-Screen Results</button>
-    <button id="downloadAuditCsv" class="btn">Download Full Audit CSV</button>
+  <div class="controls">
+    <button class="btn" id="scanBinBtn">Scan Bin QR</button>
+    <button class="btn" id="scanItemBtn">Scan Item QR</button>
+    <button class="btn" id="endBinBtn">End Bin Audit</button>
+    <button class="btn" id="exportVisible">Export Visible</button>
+    <button class="btn" id="downloadAuditCsv">Full Audit CSV</button>
   </div>
 
-  <div class="row" style="font-weight:700">
-    Current Bin: <span id="currentBin">None</span>
+  <h3>Current Bin: <span id="currentBin">None</span></h3>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Item</th>
+        <th>Scanned Bin</th>
+        <th>WH Received</th>
+        <th>Status</th>
+        <th>Audit</th>
+        <th>Resolved</th>
+      </tr>
+    </thead>
+    <tbody id="logTbody"></tbody>
+  </table>
+
+  <div id="toast" style="
+    display:none;
+    position: fixed; left:50%; bottom:20px;
+    transform: translateX(-50%);
+    background:#6c47ff;
+    padding:10px 14px;
+    border-radius:10px;">
   </div>
 
-  <!-- TABLE -->
-  <div class="row">
-    <table>
-      <thead>
-        <tr>
-          <th>Item ID</th>
-          <th>Expected Bin</th>
-          <th>Scanned Bin</th>
-          <th>WH Received</th>
-          <th>Shappi Status</th>
-          <th>Category</th>
-          <th>Subcategory</th>
-          <th>Audit Status</th>
-          <th>Resolved</th>
-        </tr>
-      </thead>
-      <tbody id="logTbody"></tbody>
-    </table>
-  </div>
-
-  <div id="toast"></div>
-
-  <!-- FINAL APP JS -->
-  <script src="app.js?v=99"></script>
+  <!-- STRICT versioning to bust Chrome cache -->
+  <script src="app.js?v=999999"></script>
 </body>
 </html>
 
