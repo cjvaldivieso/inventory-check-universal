@@ -21,7 +21,7 @@
 
     header img {
       height: 64px;
-      margin: 16px auto 4px;
+      margin: 16px auto 6px;
       display: block;
     }
 
@@ -61,7 +61,6 @@
       border: 1px solid #3b3e7a;
       padding: 8px;
       font-size: 14px;
-      text-align: center;
     }
 
     th {
@@ -80,6 +79,40 @@
       margin-top: 6px;
     }
 
+    /* ============================
+       CHROME-SAFE UPLOAD BUTTON
+       ============================ */
+    .upload-btn-direct {
+      background: #6c47ff;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin: 4px;
+      width: 180px;
+      height: 48px;
+
+      appearance: none;
+      -webkit-appearance: none;
+
+      font-size: 0;
+      text-align: center;
+    }
+
+    .upload-btn-direct::before {
+      content: "Upload CSV";
+      font-size: 16px;
+    }
+
+    .upload-btn-direct:hover {
+      background: #5633d1;
+    }
+
+    .upload-btn-direct:active {
+      transform: scale(0.97);
+    }
   </style>
 </head>
 
@@ -92,14 +125,11 @@
 
   <!-- CSV UPLOAD -->
   <div class="row">
-    <button id="triggerCsvUpload" class="btn">Upload CSV</button>
-
-    <!-- Chrome-safe hidden input -->
     <input 
-      type="file" 
-      id="csvUpload" 
+      type="file"
+      id="csvUpload"
       accept=".csv"
-      style="opacity:0; position:absolute; left:-9999px;"
+      class="upload-btn-direct"
     />
 
     <div id="csvInfo">No CSV uploaded yet.</div>
@@ -116,7 +146,6 @@
       <option>CJ</option>
       <option>Eric</option>
       <option>Greg</option>
-      <option>Justin</option>
       <option value="__add_new__">+ Add New User</option>
     </select>
 
@@ -145,10 +174,12 @@
       <thead>
         <tr>
           <th>Item ID</th>
-          <th>Expected Bin</th>
+          <th style="display:none">Expected Bin</th>
           <th>Scanned Bin</th>
           <th>WH Received</th>
           <th>Shappi Status</th>
+          <th style="display:none">Category</th>
+          <th style="display:none">Subcategory</th>
           <th>Audit Status</th>
           <th>Resolved</th>
         </tr>
@@ -172,12 +203,14 @@
         try {
           const reg = await navigator.serviceWorker.register("/service-worker.js");
           reg.update();
-        } catch (e) {}
+        } catch (e) {
+          console.error("SW registration failed", e);
+        }
       });
     }
   </script>
 
-  <script src="app.js?v=7"></script>
+  <script src="app.js?v=12"></script>
 </body>
 </html>
 
