@@ -1,111 +1,86 @@
-/* public/app.js — Shappi Inventory App v4.1 */
-
-/* FEATURES:
- - CSV upload (iOS + Chrome compatible)
- - Bin validation: 3 letters + must exist in CSV
- - Duplicate scan prevention (900ms)
- - Update existing row instead of adding duplicates
- - Hide category & subcategory
- - Stable scanning loop (iPhone safe)
- - Works for all users (timestamps included)
- - Export visible CSV + full audit CSV
+/* public/app.js — Shappi Inventory App (v4.0) */
+/* Includes:
+ - Chrome-safe Upload CSV trigger
+ - Bin validation (AAA format + must exist in CSV)
+ - Duplicate scan prevention
+ - Update-in-place rows
+ - Hide category/subcategory
+ - Improved UI table
+ - CSV timestamp fixes
 */
 
 const socket = io();
 
-// --------------------------------------------------
-// DOM REFERENCES
-// --------------------------------------------------
 const csvInfo      = document.getElementById("csvInfo");
 const csvTimestamp = document.getElementById("csvTimestamp");
 const csvUpload    = document.getElementById("csvUpload");
-
-// CHROME DESKTOP SAFE — trigger hidden file input
 const triggerCsvUpload = document.getElementById("triggerCsvUpload");
+
+// Trigger hidden input safely (Chrome Desktop compatible)
 if (triggerCsvUpload && csvUpload) {
   triggerCsvUpload.addEventListener("click", () => {
-    csvUpload.click();   // programmatically opens file chooser
+    csvUpload.click();
   });
 }
 
-const auditorSelect  = document.getElementById("auditorSelect");
-const auditorDisplay = document.getElementById("currentAuditorDisplay");
-
-const currentBinEl = document.getElementById("currentBin");
-const logTbody     = document.getElementById("logTbody");
-const scanBinBtn   = document.getElementById("scanBinBtn");
-const scanItemBtn  = document.getElementById("scanItemBtn");
-const endBinBtn    = document.getElementById("endBinBtn");
-
-let currentBin = null;
-let scanning   = false;
-let lastScan   = 0;
-const SCAN_COOLDOWN = 900; // ms
-
-// --------------------------------------------------
-// SOCKET: CSV STATUS UPDATES
-// --------------------------------------------------
-socket.on("csvUpdated", meta => {
+// Live CSV updates
+socket.on("csvUpdated", (meta) => {
   csvInfo.textContent      = `📦 CSV Loaded (${meta.total})`;
   csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
-  toast(`CSV updated • ${meta.total} items`, "info");
+  toast(`CSV loaded — ${meta.total} items`, "success");
 });
 
-// load CSV meta on page load
+// Poll CSV on load
 (async () => {
   try {
     const r = await fetch("/csv-status");
     const d = await r.json();
-    if (d && typeof d.total !== "undefined") {
+
+    if (typeof d.total !== "undefined") {
       csvInfo.textContent      = `📦 CSV Loaded (${d.total})`;
       csvTimestamp.textContent = `Last Updated: ${d.uploadedAt || "(none)"}`;
     }
-  } catch (e) {
-    console.error("csv-status error", e);
-  }
+  } catch {}
 })();
 
-// --------------------------------------------------
-// CSV UPLOAD (iOS + Chrome compatible)
-// --------------------------------------------------
-if (csvUpload) {
-  csvUpload.addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+// Upload CSV
+csvUpload.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
 
-    const fd = new FormData();
-    fd.append("file", file);
+  const fd = new FormData();
+  fd.append("file", file);
 
-    try {
-      const res  = await fetch("/upload-csv", { method: "POST", body: fd });
-      const data = await res.json();
+  try {
+    const res  = await fetch("/upload-csv", { method: "POST", body: fd });
+    const data = await res.json();
 
-      csvInfo.textContent      = `📦 CSV Loaded (${data.total})`;
-      csvTimestamp.textContent = `Last Updated: ${data.uploadedAt}`;
-      toast(`CSV uploaded • ${data.total} items`, "success");
-    } catch (err) {
-      console.error("CSV upload failed", err);
-      toast("CSV upload failed", "error");
-    }
-  });
-}
+    csvInfo.textContent      = `📦 CSV Loaded (${data.total})`;
+    csvTimestamp.textContent = `Last Updated: ${data.uploadedAt}`;
+    toast("CSV uploaded successfully", "success");
 
-// --------------------------------------------------
-// AUDITOR SELECT
-// --------------------------------------------------
+  } catch (err) {
+    toast("CSV upload failed", "error");
+  }
+});
+
+/* AUDITOR SELECTOR */
+
+const auditorSelect  = document.getElementById("auditorSelect");
+const currentAuditorDisplay = document.getElementById("currentAuditorDisplay");
+
 function setAuditor(name) {
   localStorage.setItem("auditorName", name);
-  auditorDisplay.textContent = `Current User: ${name}`;
+  currentAuditorDisplay.textContent = `Current User: ${name}`;
 }
 
 (function loadAuditor() {
   const saved = localStorage.getItem("auditorName");
   if (saved) {
     if (![...auditorSelect.options].some(o => o.value === saved)) {
-      const o = document.createElement("option");
-      o.value = saved;
-      o.textContent = saved;
-      auditorSelect.insertBefore(o, auditorSelect.lastElementChild);
+      const opt = document.createElement("option");
+      opt.value = saved; opt.textContent = saved;
+      auditorSelect.insertBefore(opt, auditorSelect.lastElementChild);
     }
     auditorSelect.value = saved;
     setAuditor(saved);
@@ -114,88 +89,90 @@ function setAuditor(name) {
 
 auditorSelect.addEventListener("change", () => {
   const v = auditorSelect.value;
+
   if (v === "__add_new__") {
-    const nn = prompt("Enter new user name:");
+    const nn = prompt("Enter your name:");
     if (nn) {
       const o = document.createElement("option");
-      o.value = nn;
-      o.textContent = nn;
+      o.value = nn; o.textContent = nn;
       auditorSelect.insertBefore(o, auditorSelect.lastElementChild);
       auditorSelect.value = nn;
       setAuditor(nn);
-    } else {
-      auditorSelect.value = localStorage.getItem("auditorName") || "";
     }
   } else {
     setAuditor(v);
   }
 });
 
-// --------------------------------------------------
-// OVERLAY + CAMERA
-// --------------------------------------------------
+/* DOM REFS */
+
+const currentBinEl = document.getElementById("currentBin");
+const logTbody     = document.getElementById("logTbody");
+const scanBinBtn   = document.getElementById("scanBinBtn");
+const scanItemBtn  = document.getElementById("scanItemBtn");
+const endBinBtn    = document.getElementById("endBinBtn");
+
+let currentBin = null;
+let scanning = false;
+let binList = [];   // Comes from CSV Data
+let lastScan = 0;
+const SCAN_COOLDOWN = 1000;
+
+/* CAMERA OVERLAY */
+
 function createOverlay() {
   const overlay = document.createElement("div");
-  overlay.className = "shappi-scan-overlay";
+  overlay.className = "shappi-overlay";
   overlay.style = `
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.92);
+    position: fixed; inset: 0; 
+    background: rgba(0,0,0,.92);
     display: flex; flex-direction: column;
-    align-items: center; justify-content: flex-start;
-    padding-top: 40px; padding-bottom: 80px;
+    align-items: center; padding-top: 35px;
     z-index: 9999;
   `;
 
   const title = document.createElement("div");
-  title.textContent = currentBin ? `Scanning Items • Bin ${currentBin}` : "Scan Bin";
-  title.style = `
-    color: #fff; font-weight: 700;
-    margin-bottom: 16px; font-size: 20px;
-  `;
+  title.textContent = currentBin ? `Scanning Items • Bin ${currentBin}` : "Scan QR";
+  title.style = "color:#fff;font-weight:700;margin-bottom:15px;font-size:20px;";
   overlay.appendChild(title);
 
   const video = document.createElement("video");
-  video.playsInline = true;
-  video.muted = true;
   video.autoplay = true;
-  video.style = `width: 92vw; max-width: 650px; border-radius: 14px;`;
+  video.playsInline = true;
+  video.style = "width:92vw;max-width:650px;border-radius:12px;";
   overlay.appendChild(video);
 
   const stopBtn = document.createElement("button");
-  stopBtn.textContent = "🛑 Stop Scanning";
+  stopBtn.textContent = "🛑 Stop";
   stopBtn.style = `
-    margin-top: 20px; background:#ff5555;
-    color:#fff; border:none; padding:12px 22px;
-    border-radius:12px; font-weight:600; font-size:18px;
+    margin-top:18px;background:#ff5555;color:#fff;
+    padding:12px 20px;font-weight:700;border-radius:12px;
   `;
   overlay.appendChild(stopBtn);
 
   document.body.appendChild(overlay);
-  return { overlay, video, stopBtn, title };
+  return { overlay, video, stopBtn };
 }
+
+function stopScan() {
+  try { activeStream?.getTracks().forEach(t => t.stop()); } catch {}
+  activeStream = null;
+  document.querySelectorAll(".shappi-overlay").forEach(el => el.remove());
+}
+
+/* BIN SCANNER */
 
 let activeStream = null;
-function stopAnyOpenScanner() {
-  try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch {}
-  activeStream = null;
-  document.querySelectorAll(".shappi-scan-overlay").forEach(el => el.remove());
-}
 
-// --------------------------------------------------
-// BIN SCAN
-// --------------------------------------------------
-scanBinBtn.onclick = () => startQRScan();
+scanBinBtn.onclick = () => startBinScan();
 
-async function startQRScan() {
+async function startBinScan() {
   const { overlay, video, stopBtn } = createOverlay();
 
-  let stopped = false;
-  stopBtn.onclick = () => { stopped = true; stopAnyOpenScanner(); };
+  stopBtn.onclick = stopScan;
 
   try {
-    activeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" }
-    });
+    activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment" } });
     video.srcObject = activeStream;
     await video.play();
 
@@ -203,39 +180,34 @@ async function startQRScan() {
     const ctx = canvas.getContext("2d");
 
     const loop = async () => {
-      if (stopped) return;
+      if (!activeStream) return;
 
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(frame.data, frame.width, frame.height);
+        const code  = jsQR(frame.data, frame.width, frame.height);
 
         if (code && code.data) {
           const bin = code.data.trim().toUpperCase();
 
-          // ❗ BIN VALIDATION
           if (!/^[A-Z]{3}$/.test(bin)) {
-            toast("Invalid bin — must be 3 letters", "error");
-            flashOK("red");
+            toast("Invalid bin (must be AAA format)", "error");
             return;
           }
 
-          // Check that bin exists in CSV
-          const meta = await (await fetch("/csv-status")).json();
-          if (!meta.bins.includes(bin)) {
-            toast(`Invalid bin — not in CSV (${bin})`, "error");
-            flashOK("red");
+          if (!binList.includes(bin)) {
+            toast("Bin not found in CSV", "error");
             return;
           }
 
           flashOK();
           currentBin = bin;
-          currentBinEl.textContent = currentBin;
+          currentBinEl.textContent = bin;
 
-          overlay.remove();
-          stopAnyOpenScanner();
+          stopScan();
 
           const auditor = localStorage.getItem("auditorName") || "Unknown";
           await fetch(`/audit/start/${bin}?auditor=${encodeURIComponent(auditor)}`, {
@@ -243,7 +215,7 @@ async function startQRScan() {
           });
 
           toast(`Bin set: ${bin}`, "success");
-          startContinuousItemScan();
+          startItemScan();
           return;
         }
       }
@@ -254,37 +226,31 @@ async function startQRScan() {
     loop();
 
   } catch (err) {
-    console.error("Camera error", err);
-    toast("Camera access denied", "error");
-    overlay.remove();
+    toast("Camera error", "error");
+    stopScan();
   }
 }
 
-// --------------------------------------------------
-// ITEM SCANNING
-// --------------------------------------------------
-scanItemBtn.onclick = () => startContinuousItemScan();
+/* ITEM SCAN */
 
-async function startContinuousItemScan() {
-  if (!currentBin) return toast("Scan a Bin QR first.", "warn");
+scanItemBtn.onclick = () => startItemScan();
+
+async function startItemScan() {
+  if (!currentBin) return toast("Scan a bin first.", "warn");
   if (scanning) return;
 
-  const { overlay, video, stopBtn, title } = createOverlay();
-  title.textContent = `Scanning Items • Bin ${currentBin}`;
   scanning = true;
 
-  let stopped = false;
+  const { overlay, video, stopBtn } = createOverlay();
+
   stopBtn.onclick = () => {
-    stopped = true;
     scanning = false;
-    stopAnyOpenScanner();
+    stopScan();
     toast("Stopped scanning", "info");
   };
 
   try {
-    activeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" }
-    });
+    activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode:"environment" } });
     video.srcObject = activeStream;
     await video.play();
 
@@ -292,20 +258,22 @@ async function startContinuousItemScan() {
     const ctx = canvas.getContext("2d");
 
     const loop = async () => {
-      if (stopped || !scanning) return;
+      if (!scanning) return;
 
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
         canvas.width = video.videoWidth;
         canvas.height = video.videoHeight;
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
         const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code = jsQR(frame.data, frame.width, frame.height);
+        const code  = jsQR(frame.data, frame.width, frame.height);
 
         const now = Date.now();
+
         if (code && code.data && now - lastScan > SCAN_COOLDOWN) {
           lastScan = now;
           flashOK();
-          await handleItemScan(code.data.trim());
+          await handleItem(code.data.trim());
         }
       }
 
@@ -314,147 +282,127 @@ async function startContinuousItemScan() {
 
     loop();
 
-  } catch (err) {
-    console.error(err);
+  } catch {
     scanning = false;
-    toast("Camera error", "error");
+    toast("Camera failed", "error");
+    stopScan();
   }
 }
 
-// --------------------------------------------------
-// HANDLE ITEM SCAN (UPDATE EXISTING ROWS)
-// --------------------------------------------------
-async function handleItemScan(itemId) {
+/* HANDLE ITEM */
+
+async function handleItem(itemId) {
   const auditor = localStorage.getItem("auditorName") || "Unknown";
 
-  try {
-    const res = await fetch(`/audit/scan?auditor=${encodeURIComponent(auditor)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ binId: currentBin, itemId })
-    });
+  const res = await fetch(`/audit/scan?auditor=${encodeURIComponent(auditor)}`, {
+    method: "POST",
+    headers: { "Content-Type":"application/json" },
+    body: JSON.stringify({ binId: currentBin, itemId })
+  });
 
-    const data = await res.json();
-    const rec = data.record || {};
+  const data = await res.json();
+  const rec = data.record || {};
 
-    let label = "", cls = "";
+  let label = "";
+  let cls = "";
 
-    switch (data.status) {
-      case "match":       label = "Correct Bin"; cls = "green";  break;
-      case "mismatch":    label = `Move → ${data.correctBin}`; cls = "yellow"; break;
-      case "no-bin":      label = "Not in CSV"; cls = "red"; break;
-      case "remove-item": label = "Remove Item"; cls = "red"; break;
-      default:            label = data.status || "Unknown"; cls = "grey";
-    }
+  if (data.status === "match") {
+    label = "Correct"; cls = "green";
+  } else if (data.status === "mismatch") {
+    label = `Move → ${data.correctBin}`; cls = "yellow";
+  } else if (data.status === "no-bin") {
+    label = "Not in CSV"; cls = "red";
+  } else if (data.status === "remove-item") {
+    label = "Remove Item"; cls = "red";
+  } else {
+    label = "Unknown"; cls = "grey";
+  }
 
-    let row = logTbody.querySelector(`tr[data-item="${itemId}"]`);
+  let row = logTbody.querySelector(`tr[data-item="${itemId}"]`);
 
-    const html = `
-      <td>${itemId}</td>
-      <td style="display:none"></td>
-      <td>${currentBin}</td>
-      <td>${rec.received || "-"}</td>
-      <td>${rec.statusText || "-"}</td>
-      <td style="display:none"></td>
-      <td style="display:none"></td>
-      <td><span class="status-pill ${cls}">${label}</span></td>
-      <td>${data.status === "mismatch"
-        ? `<label><input type="checkbox"
-             class="resolveToggle"
-             data-bin="${currentBin}"
-             data-item="${itemId}"> Move</label>`
-        : "-"}</td>
-    `;
+  const html = `
+    <td>${itemId}</td>
+    <td>${rec.expectedBin || "-"}</td>
+    <td>${currentBin}</td>
+    <td>${rec.received || "-"}</td>
+    <td>${rec.statusText || "-"}</td>
+    <td><span class="status-pill ${cls}">${label}</span></td>
+    <td>${data.status === "mismatch"
+      ? `<input type="checkbox" class="resolveToggle" data-bin="${currentBin}" data-item="${itemId}">`
+      : "-"}</td>
+  `;
 
-    if (row) {
-      row.innerHTML = html;
-    } else {
-      row = document.createElement("tr");
-      row.dataset.item = itemId;
-      row.innerHTML = html;
-      logTbody.prepend(row);
-    }
-
-  } catch (err) {
-    console.error("Scan error", err);
-    toast("Scan failed", "error");
+  if (row) {
+    row.innerHTML = html;
+  } else {
+    row = document.createElement("tr");
+    row.dataset.item = itemId;
+    row.innerHTML = html;
+    logTbody.prepend(row);
   }
 }
 
-// --------------------------------------------------
-// RESOLVE TOGGLE
-// --------------------------------------------------
+/* RESOLUTION CHECKBOX */
+
 logTbody.addEventListener("change", async (e) => {
-  const el = e.target;
-  if (!el.classList.contains("resolveToggle")) return;
+  if (!e.target.classList.contains("resolveToggle")) return;
 
-  const binId = el.getAttribute("data-bin");
-  const itemId = el.getAttribute("data-item");
-  const resolved = !!el.checked;
+  const binId = e.target.dataset.bin;
+  const itemId = e.target.dataset.item;
+  const resolved = e.target.checked;
 
-  try {
-    await fetch("/audit/resolve", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ binId, itemId, resolved })
-    });
-  } catch {
-    toast("Failed to update resolve state", "error");
-  }
+  await fetch("/audit/resolve", {
+    method: "POST",
+    headers: { "Content-Type":"application/json" },
+    body: JSON.stringify({ binId, itemId, resolved })
+  });
 });
 
-// --------------------------------------------------
-// EXPORT VISIBLE ROWS
-// --------------------------------------------------
+/* EXPORT VISIBLE */
+
 document.getElementById("exportVisible").onclick = () => {
-  let csv = "Item ID,Scanned Bin,WH Received,Shappi Status,Audit Status,Resolved\n";
+  let csv = "Item ID,Expected Bin,Scanned Bin,WH Received,Status,Audit Status,Resolved\n";
+
   [...logTbody.children].forEach(row => {
     const c = [...row.children].map(td => td.innerText.trim());
-    csv += `${c[0]},${c[2]},${c[3]},${c[4]},${c[7]},${c[8]}\n`;
+    csv += `${c.join(",")}\n`;
   });
 
   const blob = new Blob([csv], { type:"text/csv" });
   const url = URL.createObjectURL(blob);
-  const a   = document.createElement("a");
+
+  const a = document.createElement("a");
   a.href = url;
   a.download = `shappi_visible_${Date.now()}.csv`;
   a.click();
   URL.revokeObjectURL(url);
 };
 
-// --------------------------------------------------
-// EXPORT FULL AUDIT CSV
-// --------------------------------------------------
+/* EXPORT FULL AUDIT */
 document.getElementById("downloadAuditCsv").onclick = () => {
   window.location.href = "/export-summary";
 };
 
-// --------------------------------------------------
-// FLASH
-// --------------------------------------------------
-function flashOK(color="green") {
+/* UI */
+
+function flashOK() {
   const flash = document.createElement("div");
   flash.style = `
-    position: fixed; inset: 0;
-    background: rgba(${color==="green"?"40,167,69":"220,53,69"},0.28);
+    position: fixed; inset: 0; background: rgba(40,167,69,.28);
     z-index: 9998;
   `;
   document.body.appendChild(flash);
   setTimeout(() => flash.remove(), 180);
 }
 
-// --------------------------------------------------
-// TOAST
-// --------------------------------------------------
 function toast(msg, type="info") {
   const t = document.getElementById("toast");
   t.textContent = msg;
   t.style.display = "block";
   t.style.background =
-    type==="success" ? "#28a745" :
-    type==="warn"    ? "#ffc107" :
-    type==="error"   ? "#dc3545" : "#6c47ff";
-
-  setTimeout(() => { t.style.display = "none"; }, 2000);
+    type === "success" ? "#28a745" :
+    type === "warn"    ? "#ffc107" :
+    type === "error"   ? "#dc3545" : "#6c47ff";
+  setTimeout(() => t.style.display = "none", 2500);
 }
 

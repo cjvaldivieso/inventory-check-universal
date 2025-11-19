@@ -44,7 +44,6 @@
       margin: 4px;
       cursor: pointer;
       font-weight: 600;
-      font-size: 16px;
     }
 
     .btn:hover {
@@ -62,6 +61,7 @@
       border: 1px solid #3b3e7a;
       padding: 8px;
       font-size: 14px;
+      text-align: center;
     }
 
     th {
@@ -80,17 +80,6 @@
       margin-top: 6px;
     }
 
-    /* Mobile table scrolling fix */
-    @media(max-width: 600px) {
-      table {
-        font-size: 12px;
-        width: 98%;
-      }
-      th, td {
-        padding: 6px;
-      }
-    }
-
   </style>
 </head>
 
@@ -105,11 +94,12 @@
   <div class="row">
     <button id="triggerCsvUpload" class="btn">Upload CSV</button>
 
+    <!-- Chrome-safe hidden input -->
     <input 
-      type="file"
-      id="csvUpload"
+      type="file" 
+      id="csvUpload" 
       accept=".csv"
-      style="display:none"
+      style="opacity:0; position:absolute; left:-9999px;"
     />
 
     <div id="csvInfo">No CSV uploaded yet.</div>
@@ -119,7 +109,7 @@
   <!-- Select User -->
   <div class="row">
     <label for="auditorSelect"><b>Select User:</b></label>
-    <select id="auditorSelect" class="btn" style="padding:8px 10px;">
+    <select id="auditorSelect" class="btn" style="padding:8px 10px">
       <option value="">-- Choose Your Name --</option>
       <option>Anslee</option>
       <option>Caz</option>
@@ -140,11 +130,12 @@
     <button id="scanBinBtn"   class="btn">Scan Bin QR</button>
     <button id="scanItemBtn"  class="btn">Scan Item QR (Continuous)</button>
     <button id="endBinBtn"    class="btn">End Bin Audit</button>
+
     <button id="exportVisible"     class="btn">Export On-Screen Results</button>
     <button id="downloadAuditCsv"  class="btn">Download Full Audit CSV</button>
   </div>
 
-  <div class="row" style="font-weight:700;">
+  <div class="row" style="font-weight:700">
     Current Bin: <span id="currentBin">None</span>
   </div>
 
@@ -158,8 +149,6 @@
           <th>Scanned Bin</th>
           <th>WH Received</th>
           <th>Shappi Status</th>
-          <th style="display:none">Category</th>
-          <th style="display:none">Subcategory</th>
           <th>Audit Status</th>
           <th>Resolved</th>
         </tr>
@@ -183,14 +172,12 @@
         try {
           const reg = await navigator.serviceWorker.register("/service-worker.js");
           reg.update();
-        } catch (e) {
-          console.error("SW registration failed", e);
-        }
+        } catch (e) {}
       });
     }
   </script>
 
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=7"></script>
 </body>
 </html>
 
