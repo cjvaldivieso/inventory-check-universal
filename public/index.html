@@ -21,13 +21,13 @@
 
     header img {
       height: 64px;
-      margin: 16px auto 4px;
+      margin: 20px auto 6px;
       display: block;
     }
 
     h2 {
       color: #6c47ff;
-      margin-bottom: 8px;
+      margin-bottom: 12px;
     }
 
     .row {
@@ -40,45 +40,40 @@
       border: none;
       color: #fff;
       border-radius: 10px;
-      padding: 10px 14px;
-      margin: 4px;
+      padding: 12px 16px;
+      margin: 6px;
       cursor: pointer;
       font-weight: 600;
-      display: inline-block;
-      text-align: center;
+      font-size: 16px;
     }
 
     .btn:hover {
       background: #5633d1;
     }
 
-    /* FIXED CSV UPLOAD BUTTON */
-    #csvUploadLabel {
-      position: relative;
-      overflow: hidden;
-    }
-
-    #csvUploadLabel input[type="file"] {
-      position: absolute;
-      left: 0;
-      top: 0;
-      opacity: 0;
+    .csv-upload-btn {
+      background: #6c47ff;
+      border-radius: 10px;
+      padding: 12px 16px;
+      display: inline-block;
+      font-weight: 600;
       cursor: pointer;
-      height: 100%;
-      width: 100%;
+      margin-bottom: 8px;
     }
+    .csv-upload-btn:hover { background:#5633d1; }
+    .csv-upload-btn:active { transform: scale(0.96); }
 
     table {
-      margin: 16px auto;
+      margin: 20px auto;
       border-collapse: collapse;
-      width: 95%;
+      width: 96%;
       max-width: 980px;
+      font-size: 12px;
     }
 
     th, td {
       border: 1px solid #3b3e7a;
       padding: 8px;
-      font-size: 14px;
     }
 
     th {
@@ -88,13 +83,30 @@
     #csvTimestamp {
       color: #6c47ff;
       font-weight: 500;
-      margin-top: 8px;
+      margin-top: 6px;
     }
 
     #csvInfo {
       color: #bdbde6;
-      font-size: 13px;
-      margin-top: 6px;
+      font-size: 14px;
+      margin-top: 4px;
+    }
+
+    .status-pill {
+      padding: 4px 7px;
+      border-radius: 8px;
+      font-weight: 600;
+      color: #fff;
+      font-size: 11px;
+    }
+    .green { background:#28a745; }
+    .yellow { background:#ffc107; color:#000; }
+    .red { background:#dc3545; }
+    .grey { background:#6c47ff; }
+
+    @media (max-width: 600px) {
+      table { font-size: 11px; }
+      .btn { font-size:14px; padding:10px 12px; }
     }
   </style>
 </head>
@@ -106,33 +118,15 @@
     <h2>📦 Shappi Inventory App</h2>
   </header>
 
-<!-- CSV UPLOAD -->
-<div class="row">
-  <!-- Real file input (visible but styled tiny & transparent to avoid iOS blocking) -->
-  <input 
-    type="file" 
-    id="csvUpload" 
-    accept=".csv" 
-    style="
-      position: absolute;
-      opacity: 0;
-      width: 1px;
-      height: 1px;
-      overflow: hidden;
-      z-index: -1;
-    "
-  />
+  <!-- CSV UPLOAD -->
+  <div class="row">
+    <label for="csvUpload" class="csv-upload-btn">Upload CSV</label>
+    <input type="file" id="csvUpload" accept=".csv" style="display:none" />
+    <div id="csvInfo">No CSV uploaded yet.</div>
+    <p id="csvTimestamp">Last Updated: (none)</p>
+  </div>
 
-  <!-- Button that triggers the hidden input -->
-  <label for="csvUpload" class="btn" style="display:inline-block; margin-bottom:6px;">
-    Upload CSV
-  </label>
-
-  <div id="csvInfo">No CSV uploaded yet.</div>
-  <p id="csvTimestamp">Last Updated: (none)</p>
-</div>
-
-  <!-- Select User -->
+  <!-- Auditor -->
   <div class="row">
     <label for="auditorSelect"><b>Select User:</b></label>
     <select id="auditorSelect" class="btn" style="padding:8px 10px">
@@ -148,17 +142,16 @@
 
     <div id="currentAuditorDisplay"
          style="margin-top:8px;font-weight:700;color:#6c47ff;">
-      Current User: <span id="currentAuditor">None</span>
+      Current User: None
     </div>
   </div>
 
   <!-- Controls -->
   <div class="row">
-    <button id="scanBinBtn"   class="btn">Scan Bin QR</button>
-    <button id="scanItemBtn"  class="btn">Scan Item QR (Continuous)</button>
-    <button id="endBinBtn"    class="btn">End Bin Audit</button>
-
-    <button id="exportVisible"    class="btn">Export On-Screen Results</button>
+    <button id="scanBinBtn" class="btn">Scan Bin QR</button>
+    <button id="scanItemBtn" class="btn">Scan Item QR (Continuous)</button>
+    <button id="endBinBtn" class="btn">End Bin Audit</button>
+    <button id="exportVisible" class="btn">Export On-Screen Results</button>
     <button id="downloadAuditCsv" class="btn">Download Full Audit CSV</button>
   </div>
 
@@ -166,13 +159,13 @@
     Current Bin: <span id="currentBin">None</span>
   </div>
 
-  <!-- Results Table -->
+  <!-- Table -->
   <div class="row">
     <table>
       <thead>
         <tr>
           <th>Item ID</th>
-          <th>Expected Bin</th>
+          <th style="display:none">Expected Bin</th>
           <th>Scanned Bin</th>
           <th>WH Received</th>
           <th>Shappi Status</th>
@@ -188,25 +181,13 @@
 
   <!-- Toast -->
   <div id="toast" style="
-      position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-      background: #1e293b; color: #fff; border: 1px solid #6c47ff;
+      position: fixed; left: 50%; bottom: 24px;
+      transform: translateX(-50%);
+      background: #1e293b; color: #fff;
+      border: 1px solid #6c47ff;
       padding: 10px 14px; border-radius: 10px;
       display: none; z-index: 99999;">
   </div>
-
-  <!-- Service worker -->
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", async () => {
-        try {
-          const reg = await navigator.serviceWorker.register("/service-worker.js");
-          reg.update();
-        } catch (e) {
-          console.error("SW registration failed", e);
-        }
-      });
-    }
-  </script>
 
   <script src="app.js?v=7"></script>
 </body>
