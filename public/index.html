@@ -2,8 +2,9 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Shappi Inventory App</title>
+  <link rel="manifest" href="manifest.json" />
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
@@ -15,6 +16,23 @@
       color: #fff;
       margin: 0;
       text-align: center;
+      padding: 0;
+    }
+
+    header img {
+      height: 64px;
+      margin: 16px auto 4px;
+      display: block;
+    }
+
+    h2 {
+      color: #6c47ff;
+      margin-bottom: 8px;
+    }
+
+    .row {
+      margin: 12px auto;
+      max-width: 900px;
     }
 
     .btn {
@@ -23,100 +41,156 @@
       color: #fff;
       border-radius: 10px;
       padding: 10px 14px;
-      margin: 6px;
-      font-weight: 600;
+      margin: 4px;
       cursor: pointer;
+      font-weight: 600;
+      font-size: 15px;
     }
-
     .btn:hover {
       background: #5633d1;
     }
 
-    #csvUpload {
-      color: #fff;
+    /* CSV button (hidden input) */
+    .csv-btn {
       background: #6c47ff;
+      padding: 10px 14px;
       border-radius: 10px;
-      padding: 10px;
-      width: 210px;
+      display: inline-block;
+      cursor: pointer;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .csv-btn:hover {
+      background: #5633d1;
     }
 
+    /* Table */
     table {
+      margin: 16px auto;
+      border-collapse: collapse;
       width: 95%;
       max-width: 980px;
-      margin: 20px auto;
-      border-collapse: collapse;
+      font-size: 14px;
     }
-
     th, td {
       border: 1px solid #3b3e7a;
       padding: 8px;
-      font-size: 13px;
     }
-
     th {
       background: #2c2f6c;
+      font-weight: 700;
+    }
+
+    #csvTimestamp {
+      color: #6c47ff;
+      font-weight: 500;
+      margin-top: 8px;
+    }
+    #csvInfo {
+      color: #bdbde6;
+      font-size: 13px;
+      margin-top: 6px;
+    }
+
+    /* Mobile fix */
+    @media (max-width: 480px) {
+      .btn {
+        width: 90%;
+        font-size: 14px;
+      }
+      table {
+        font-size: 12px;
+      }
     }
   </style>
 </head>
-<body>
 
-  <h2>📦 Shappi Inventory App</h2>
+<body>
+  <header>
+    <img src="icons/shappi-inventory.png" alt="Shappi Logo"
+         onerror="this.src='shappi-inventory.png'">
+    <h2>📦 Shappi Inventory App</h2>
+  </header>
+
+  <!-- CSV UPLOAD -->
+  <div class="row">
+    <label class="csv-btn" for="csvUpload">Upload CSV</label>
+    <input type="file" id="csvUpload" accept=".csv" style="display:none" />
+
+    <div id="csvInfo">No CSV uploaded yet.</div>
+    <p id="csvTimestamp">Last Updated: (none)</p>
+  </div>
+
+  <!-- Select User -->
+  <div class="row">
+    <label for="auditorSelect"><b>Select User:</b></label><br>
+    <select id="auditorSelect" class="btn" style="padding:8px 10px; margin-top:6px;">
+      <option value="">-- Choose Your Name --</option>
+      <option>Anslee</option>
+      <option>Caz</option>
+      <option>CJ</option>
+      <option>Eric</option>
+      <option>Greg</option>
+      <option value="__add_new__">+ Add New User</option>
+    </select>
+
+    <div id="currentAuditorDisplay" style="margin-top:10px;font-weight:700;color:#6c47ff;">
+      Current User: <span id="currentAuditor">None</span>
+    </div>
+  </div>
+
+  <!-- Controls -->
+  <div class="row">
+    <button id="scanBinBtn" class="btn">Scan Bin QR</button>
+    <button id="scanItemBtn" class="btn">Scan Item QR (fallback)</button>
+  </div>
 
   <div class="row">
-    <input type="file" id="csvUpload" accept=".csv" />
-    <div id="csvInfo">No CSV uploaded.</div>
-    <div id="csvTimestamp">Last Updated: (none)</div>
+    <button id="exportVisible" class="btn">Export Table</button>
+    <button id="downloadAuditCsv" class="btn">Export Full Audit</button>
   </div>
 
-  <div>
-    <label><b>Select User:</b></label>
-    <select id="auditorSelect" class="btn">
-      <option value="">-- Pick User --</option>
-      <option>CJ</option>
-      <option>Greg</option>
-      <option>Eric</option>
-      <option>Justin</option>
-      <option>Anslee</option>
-      <option value="__add_new__">+ Add New</option>
-    </select>
-    <div id="currentAuditorDisplay" style="margin-top:10px">Current: None</div>
+  <div class="row" style="font-weight:700">
+    Current Bin: <span id="currentBin">None</span>
   </div>
 
-  <div class="controls">
-    <button class="btn" id="scanBinBtn">Scan Bin QR</button>
-    <button class="btn" id="scanItemBtn">Scan Item QR</button>
-    <button class="btn" id="endBinBtn">End Bin Audit</button>
-    <button class="btn" id="exportVisible">Export Visible</button>
-    <button class="btn" id="downloadAuditCsv">Full Audit CSV</button>
+  <!-- Results Table -->
+  <div class="row">
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th style="display:none;">Expected Bin</th>
+          <th>Bin</th>
+          <th>WH Received</th>
+          <th>Status</th>
+          <th>Audit</th>
+          <th>Resolved</th>
+        </tr>
+      </thead>
+      <tbody id="logTbody"></tbody>
+    </table>
   </div>
 
-  <h3>Current Bin: <span id="currentBin">None</span></h3>
-
-  <table>
-    <thead>
-      <tr>
-        <th>Item</th>
-        <th>Scanned Bin</th>
-        <th>WH Received</th>
-        <th>Status</th>
-        <th>Audit</th>
-        <th>Resolved</th>
-      </tr>
-    </thead>
-    <tbody id="logTbody"></tbody>
-  </table>
-
+  <!-- Toast -->
   <div id="toast" style="
-    display:none;
-    position: fixed; left:50%; bottom:20px;
-    transform: translateX(-50%);
-    background:#6c47ff;
-    padding:10px 14px;
-    border-radius:10px;">
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: #1e293b; color: #fff; border: 1px solid #6c47ff;
+    padding: 10px 14px; border-radius: 10px;
+    display: none; z-index: 99999;">
   </div>
 
-  <!-- STRICT versioning to bust Chrome cache -->
-  <script src="app.js?v=999999"></script>
+  <!-- Service worker -->
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", async () => {
+        try { await navigator.serviceWorker.register("/service-worker.js"); }
+        catch (e) { console.error("SW registration failed", e); }
+      });
+    }
+  </script>
+
+  <script src="app.js?v=18"></script>
 </body>
 </html>
 
