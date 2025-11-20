@@ -1,12 +1,14 @@
+// server.js — Shappi Inventory App (with XLSX export)
+// ---------------------------------------------------
 import express from "express";
 import multer from "multer";
-import csv from "csv-parser";
 import fs from "fs";
+import csv from "csv-parser";
 import cors from "cors";
-import http from "http";
-import { Server } from "socket.io";
 import moment from "moment-timezone";
-import ExcelJS from "exceljs";
+import XLSX from "xlsx";
+import { Server } from "socket.io";
+import http from "http";
 
 const app = express();
 const server = http.createServer(app);
@@ -14,312 +16,212 @@ const io = new Server(server);
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static("public"));
 
-// Static files with no-cache for HTML/CSS/JS
-app.use(express.static("public", {
-  setHeaders: (res, filePath) => {
-    if (filePath.endsWith(".html") || filePath.endsWith(".js") || filePath.endsWith(".css")) {
-      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-      res.setHeader("Pragma", "no-cache");
-      res.setHeader("Expires", "0");
-    }
-  }
-}));
+/* --------------------------------------------------
+   STORAGE FOLDERS
+-------------------------------------------------- */
+if (!fs.existsSync("data")) fs.mkdirSync("data");
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
 
-// --------------------------------------------------
-// GLOBAL STATE
-// --------------------------------------------------
-let inventoryData = [];
-let inventoryMap  = {}; // ITEM ID -> record
-let lastCsvTimestamp = null;
-let audits = {};        // binId -> { auditor, startTime, items[] }
-
+/* --------------------------------------------------
+   MULTER UPLOAD (CSV)
+-------------------------------------------------- */
 const upload = multer({ dest: "uploads/" });
 
-// Helper: format timestamps in EST as MM/DD/YYYY hh:mm AM/PM
-function formatEST(ts) {
-  if (!ts) return "";
-  return moment(ts).tz("America/New_York").format("MM/DD/YYYY hh:mm A");
+let masterCSV = [];       // All CSV items
+let masterBins = new Set(); // Valid bin IDs
+
+/* --------------------------------------------------
+   LOAD CSV INTO MEMORY
+-------------------------------------------------- */
+function loadCSVIntoMemory(filepath) {
+  return new Promise((resolve) => {
+    const rows = [];
+    fs.createReadStream(filepath)
+      .pipe(csv())
+      .on("data", (row) => rows.push(row))
+      .on("end", () => resolve(rows));
+  });
 }
 
-// --------------------------------------------------
-// CSV UPLOAD
-// --------------------------------------------------
-app.post("/upload-csv", upload.single("file"), (req, res) => {
-  const uploadTime = moment().tz("America/New_York").format("MM/DD/YYYY hh:mm A");
-  const rows = [];
+/* --------------------------------------------------
+   CSV UPLOAD ROUTE
+-------------------------------------------------- */
+app.post("/upload-csv", upload.single("file"), async (req, res) => {
+  try {
+    const csvPath = req.file.path;
 
-  fs.createReadStream(req.file.path)
-    .pipe(csv())
-    .on("data", (d) => {
-      const clean = {};
-      for (const k in d) {
-        clean[k.trim().toLowerCase()] = (d[k] || "").toString().trim();
-      }
-      rows.push(clean);
-    })
-    .on("end", () => {
-      try { fs.unlinkSync(req.file.path); } catch {}
+    masterCSV = await loadCSVIntoMemory(csvPath);
 
-      inventoryData = rows;
-      inventoryMap  = {};
-      lastCsvTimestamp = uploadTime;
+    masterBins = new Set(
+      masterCSV.map((r) =>
+        (r["Warehouse Bin ID"] || r["Warehouse Bin ID "] || "").trim()
+      )
+    );
 
-      for (const row of rows) {
-        const id = (row["item id"] || "").toUpperCase();
-        if (id) inventoryMap[id] = row;
-      }
+    const meta = {
+      total: masterCSV.length,
+      uploadedAt: moment().tz("America/New_York").format("YYYY-MM-DD HH:mm:ss"),
+    };
 
-      io.emit("csvUpdated", {
-        total: rows.length,
-        uploadedAt: uploadTime
-      });
+    fs.writeFileSync("data/csv-meta.json", JSON.stringify(meta));
 
-      res.json({
-        message: "CSV uploaded",
-        total: rows.length,
-        uploadedAt: uploadTime
-      });
-    })
-    .on("error", (err) => {
-      console.error("CSV Parse Error:", err);
-      res.status(500).json({ error: "CSV parsing failed" });
-    });
-});
+    io.emit("csvUpdated", meta);
 
-// --------------------------------------------------
-// CSV STATUS
-// --------------------------------------------------
-app.get("/csv-status", (req, res) => {
-  res.json({
-    total: inventoryData.length,
-    uploadedAt: lastCsvTimestamp
-  });
-});
-
-// --------------------------------------------------
-// BIN VALIDATION (front-end uses this)
-// --------------------------------------------------
-app.get("/validate-bin/:binId", (req, res) => {
-  const bin = req.params.binId.toUpperCase();
-
-  const valid = inventoryData.some(row =>
-    (row["warehouse bin id"] || "").toUpperCase() === bin
-  );
-
-  res.json({ valid });
-});
-
-// --------------------------------------------------
-// AUDIT START
-// --------------------------------------------------
-app.post("/audit/start/:binId", (req, res) => {
-  const binId = req.params.binId.toUpperCase();
-  const auditor = (req.query.auditor || "Unknown").toString();
-
-  audits[binId] = {
-    auditor,
-    startTime: new Date().toISOString(),
-    items: []
-  };
-
-  io.emit("auditStarted", { binId, auditor });
-  res.json({ message: `Audit started for ${binId}`, auditor });
-});
-
-// --------------------------------------------------
-// ITEM SCAN
-// --------------------------------------------------
-app.post("/audit/scan", (req, res) => {
-  const { binId, itemId } = req.body;
-  const auditor = (req.query.auditor || "Unknown").toString();
-
-  if (!binId)  return res.status(400).json({ error: "Missing binId" });
-  if (!itemId) return res.status(400).json({ error: "Missing itemId" });
-
-  const bin = binId.toUpperCase();
-  const id  = itemId.toUpperCase();
-
-  if (!audits[bin]) {
-    return res.status(400).json({ error: "Bin not active. Scan bin first." });
+    res.json(meta);
+  } catch (err) {
+    console.error("CSV upload failed", err);
+    res.status(500).json({ error: "CSV load failed" });
   }
+});
 
-  const record = inventoryMap[id];
-  let status = "match";
-  let expectedBin = record?.["warehouse bin id"] || "-";
+/* --------------------------------------------------
+   LIVE CSV STATUS
+-------------------------------------------------- */
+app.get("/csv-status", (req, res) => {
+  try {
+    const meta = JSON.parse(fs.readFileSync("data/csv-meta.json", "utf8"));
+    res.json(meta);
+  } catch (err) {
+    res.json({ total: 0, uploadedAt: null });
+  }
+});
+
+/* --------------------------------------------------
+   BIN START
+-------------------------------------------------- */
+app.post("/audit/start/:binId", (req, res) => {
+  const { binId } = req.params;
+  const { auditor } = req.query;
+  console.log(`Starting audit for BIN ${binId} by ${auditor}`);
+  res.json({ ok: true });
+});
+
+/* --------------------------------------------------
+   ITEM SCAN
+-------------------------------------------------- */
+app.post("/audit/scan", async (req, res) => {
+  const { itemId, binId, auditor } = req.body;
+
+  const record = masterCSV.find((r) => String(r["Item ID"]).trim() === itemId);
 
   if (!record) {
-    status = "no-bin";
-  } else {
-    const s = (record["status"] || "").toLowerCase();
-    if (["shappi closed", "abandoned", "shappi canceled"].includes(s)) {
-      status = "remove-item";
-    } else if ((expectedBin || "").toUpperCase() !== bin) {
-      status = "mismatch";
-    }
+    return res.json({
+      status: "no-bin",
+      record: {},
+    });
   }
 
-  const auditEntry = {
-    itemId: id,
+  const expectedBin =
+    (record["Warehouse Bin ID"] || record["Warehouse Bin ID "] || "").trim();
+
+  let resolvedStatus = "";
+  if (expectedBin === binId) resolvedStatus = "match";
+  else resolvedStatus = expectedBin === "" ? "remove-item" : "mismatch";
+
+  const responseRecord = {
+    itemId,
     expectedBin,
-    scannedBin: bin,
-    status,
-    resolved: false,
-    ts: new Date().toISOString()
+    scannedBin: binId,
+    received: record["Received at Warehouse"] || record["Received"] || "-",
+    statusText: record["status"] || record["Status"] || "-",
   };
 
-  audits[bin].items.unshift(auditEntry);
-  io.emit("itemScanned", { binId: bin, auditor, item: auditEntry });
-
   res.json({
-    status,
-    correctBin: expectedBin !== "-" ? expectedBin : null,
-    record: record ? {
-      expectedBin,
-      received: record["received at warehouse"] || "",
-      statusText: record["status"] || "",
-      category: record["category"] || "",
-      subcategory: record["subcategory"] || ""
-    } : null
+    status: resolvedStatus,
+    correctBin: expectedBin,
+    record: responseRecord,
   });
 });
 
-// --------------------------------------------------
-// RESOLVE
-// --------------------------------------------------
+/* --------------------------------------------------
+   RESOLUTION CHECKBOX
+-------------------------------------------------- */
 app.post("/audit/resolve", (req, res) => {
-  const { binId, itemId, resolved } = req.body;
-  const bin = (binId || "").toUpperCase();
-  const id  = (itemId || "").toUpperCase();
-
-  if (!audits[bin]) return res.status(404).json({ error: "Audit not found" });
-
-  const row = audits[bin].items.find(i => i.itemId === id);
-  if (!row) return res.status(404).json({ error: "Item not found in audit" });
-
-  row.resolved = !!resolved;
-
-  io.emit("itemResolved", { binId: bin, itemId: id, resolved });
-  res.json({ message: "Updated", binId: bin, itemId: id });
+  console.log("Resolution updated:", req.body);
+  res.json({ ok: true });
 });
 
-// --------------------------------------------------
-// EXPORT SUMMARY (XLSX: 2 sheets)
-// --------------------------------------------------
-app.get("/export-summary", async (req, res) => {
+/* --------------------------------------------------
+   EXPORT TABLE (CSV)
+-------------------------------------------------- */
+app.get("/export-summary", (req, res) => {
+  const file = "data/summary.csv";
+  if (!fs.existsSync(file)) return res.status(404).send("Not found");
+  res.download(file);
+});
+
+/* --------------------------------------------------
+   EXPORT FULL AUDIT — XLSX (2 SHEETS)
+-------------------------------------------------- */
+app.get("/export-full-audit", async (req, res) => {
   try {
-    const workbook = new ExcelJS.Workbook();
+    const auditFile = "data/full-audit.json";
+    if (!fs.existsSync(auditFile))
+      return res.status(400).send("No audit data available");
 
-    // Sheet 1: Full Audit Details
-    const detailsSheet = workbook.addWorksheet("Full Audit");
-    detailsSheet.addRow([
-      "Bin ID",
-      "Auditor",
-      "# Items",
-      "Start Time",
-      "Item ID",
-      "Expected Bin",
-      "Scanned Bin",
-      "WH Received",
-      "Shappi Status",
-      "Audit Status",
-      "Resolved",
-      "Scan Timestamp",
-      "Order ID",
-      "Category",
-      "Subcategory",
-      "Customer"
-    ]);
+    const auditData = JSON.parse(fs.readFileSync(auditFile));
 
-    for (const [binId, audit] of Object.entries(audits)) {
-      const totalItems = audit.items.length;
+    const items = auditData.items || [];
+    const summary = auditData.summary || [];
 
-      audit.items.forEach(i => {
-        const inv = inventoryMap[i.itemId] || {};
-        detailsSheet.addRow([
-          binId,
-          audit.auditor,
-          totalItems,
-          formatEST(audit.startTime),
-          i.itemId,
-          i.expectedBin || "",
-          i.scannedBin || "",
-          inv["received at warehouse"] || "",
-          inv["status"] || "",
-          i.status,
-          i.resolved ? "Yes" : "No",
-          formatEST(i.ts),
-          inv["order id"] || "",
-          inv["category"] || "",
-          inv["subcategory"] || "",
-          inv["customer"] || ""
-        ]);
-      });
-    }
+    /* ------------------------
+       FORMAT DATES EST
+    ------------------------ */
+    const itemsFormatted = items.map((r) => ({
+      ...r,
+      scanTimestamp: moment(r.scanTimestamp)
+        .tz("America/New_York")
+        .format("YYYY-MM-DD HH:mm:ss"),
+    }));
 
-    // Sheet 2: Bin Summary
-    const summarySheet = workbook.addWorksheet("Bin Summary");
-    summarySheet.addRow([
-      "Bin ID",
-      "Expected Items",
-      "Scanned Items",
-      "Missing Items",
-      "Missing Item IDs"
-    ]);
+    /* ------------------------
+       WORKBOOK
+    ------------------------ */
+    const workbook = XLSX.utils.book_new();
 
-    for (const [binId, audit] of Object.entries(audits)) {
-      // expected items from CSV for this bin
-      const expectedSet = new Set(
-        inventoryData
-          .filter(row => (row["warehouse bin id"] || "").toUpperCase() === binId)
-          .map(row => (row["item id"] || "").toUpperCase())
-          .filter(Boolean)
-      );
+    // Sheet 1 — Full item-level audit
+    const sheet1 = XLSX.utils.json_to_sheet(itemsFormatted);
+    XLSX.utils.book_append_sheet(workbook, sheet1, "Audit Details");
 
-      // scanned items in this bin that are actually expected
-      const scannedExpected = new Set(
-        audit.items
-          .map(i => i.itemId)
-          .filter(id => expectedSet.has(id))
-      );
+    // Sheet 2 — Bin Summary
+    const sheet2 = XLSX.utils.json_to_sheet(summary);
+    XLSX.utils.book_append_sheet(workbook, sheet2, "Bin Summary");
 
-      const missingIds = [...expectedSet].filter(id => !scannedExpected.has(id));
+    const buffer = XLSX.write(workbook, {
+      type: "buffer",
+      bookType: "xlsx",
+    });
 
-      const expectedCount = expectedSet.size;
-      const scannedCount  = scannedExpected.size;
-      const missingCount  = missingIds.length;
-
-      summarySheet.addRow([
-        binId,
-        expectedCount,
-        scannedCount,
-        missingCount,
-        missingIds.join(" ")
-      ]);
-    }
-
-    // Send XLSX
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=shappi_full_audit_${Date.now()}.xlsx`
+    );
     res.setHeader(
       "Content-Type",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     );
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="shappi_full_audit_${Date.now()}.xlsx"`
-    );
 
-    await workbook.xlsx.write(res);
-    res.end();
+    res.send(buffer);
   } catch (err) {
-    console.error("Export summary error:", err);
-    res.status(500).send("Failed to export audit summary");
+    console.error("Full audit export failed", err);
+    res.status(500).send("Export failed");
   }
 });
 
-// --------------------------------------------------
-// START SERVER
-// --------------------------------------------------
-io.on("connection", () => {});
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
+/* --------------------------------------------------
+   SOCKET
+-------------------------------------------------- */
+io.on("connection", () => {
+  console.log("Client connected");
+});
+
+/* --------------------------------------------------
+   START SERVER
+-------------------------------------------------- */
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () =>
+  console.log(`Shappi Inventory Backend running on ${PORT}`)
+);
 
