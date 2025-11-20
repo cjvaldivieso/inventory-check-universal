@@ -12,7 +12,8 @@
     "express": "^5.1.0",
     "moment-timezone": "^0.6.0",
     "multer": "^2.0.2",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "exceljs": "^4.4.0"
   },
   "description": "",
   "repository": {
@@ -27,3 +28,4 @@
   },
   "homepage": "https://github.com/cjvaldivieso/inventory-check-universal#readme"
 }
+
