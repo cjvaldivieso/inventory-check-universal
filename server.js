@@ -35,6 +35,12 @@ let audits = {};        // binId → { auditor, startTime, items[] }
 
 const upload = multer({ dest: "uploads/" });
 
+// Helper: format timestamps in EST as MM/DD/YYYY hh:mm AM/PM
+function formatEST(ts) {
+  if (!ts) return "";
+  return moment(ts).tz("America/New_York").format("MM/DD/YYYY hh:mm A");
+}
+
 // --------------------------------------------------
 // CSV UPLOAD
 // --------------------------------------------------
@@ -127,7 +133,7 @@ app.post("/audit/scan", (req, res) => {
   const { binId, itemId } = req.body;
   const auditor = (req.query.auditor || "Unknown").toString();
 
-  if (!binId) return res.status(400).json({ error: "Missing binId" });
+  if (!binId)  return res.status(400).json({ error: "Missing binId" });
   if (!itemId) return res.status(400).json({ error: "Missing itemId" });
 
   const bin = binId.toUpperCase();
@@ -195,38 +201,106 @@ app.post("/audit/resolve", (req, res) => {
 });
 
 // --------------------------------------------------
-// EXPORT FULL AUDIT (includes Expected Bin + Status etc.)
+// EXPORT FULL AUDIT (with BIN SUMMARY + extra fields)
 // --------------------------------------------------
 app.get("/export-summary", (req, res) => {
-  const rows = [
-    [
-      "Bin ID","Auditor","# Items","Start Time","Item ID",
-      "Expected Bin","Scanned Bin","WH Received",
-      "Shappi Status","Audit Status","Resolved","Scan Timestamp"
-    ]
-  ];
+  const rows = [];
 
+  // 1) BIN SUMMARY HEADER
+  rows.push(["BIN SUMMARY"]);
+  rows.push([
+    "Bin ID",
+    "Expected Items",
+    "Scanned Items",
+    "Missing Items",
+    "Missing Item IDs"
+  ]);
+
+  // Build summary per bin (for bins that have an audit)
   for (const [binId, audit] of Object.entries(audits)) {
+    // All expected items in this bin (from CSV)
+    const expectedSet = new Set(
+      inventoryData
+        .filter(row => (row["warehouse bin id"] || "").toUpperCase() === binId)
+        .map(row => (row["item id"] || "").toUpperCase())
+        .filter(Boolean)
+    );
+
+    // Items from expectedSet that were scanned in this bin
+    const scannedExpected = new Set(
+      audit.items
+        .map(i => i.itemId)
+        .filter(id => expectedSet.has(id))
+    );
+
+    const missingIds = [...expectedSet].filter(id => !scannedExpected.has(id));
+
+    const expectedCount = expectedSet.size;
+    const scannedCount  = scannedExpected.size;
+    const missingCount  = missingIds.length;
+
+    rows.push([
+      binId,
+      expectedCount,
+      scannedCount,
+      missingCount,
+      missingIds.join(" ")
+    ]);
+  }
+
+  // Blank line between summary and detail
+  rows.push([]);
+  rows.push(["FULL AUDIT DETAILS"]);
+
+  // 2) FULL ITEM-LEVEL DETAILS HEADER
+  rows.push([
+    "Bin ID",
+    "Auditor",
+    "# Items",
+    "Start Time",
+    "Item ID",
+    "Expected Bin",
+    "Scanned Bin",
+    "WH Received",
+    "Shappi Status",
+    "Audit Status",
+    "Resolved",
+    "Scan Timestamp",
+    "Order ID",
+    "Category",
+    "Subcategory",
+    "Customer"
+  ]);
+
+  // 3) ITEM-LEVEL ROWS
+  for (const [binId, audit] of Object.entries(audits)) {
+    const totalItems = audit.items.length;
+
     audit.items.forEach(i => {
       const inv = inventoryMap[i.itemId] || {};
 
       rows.push([
         binId,
         audit.auditor,
-        audit.items.length,
-        audit.startTime || "-",
+        totalItems,
+        formatEST(audit.startTime),
         i.itemId,
-        i.expectedBin,
-        i.scannedBin,
+        i.expectedBin || "",
+        i.scannedBin || "",
         inv["received at warehouse"] || "",
         inv["status"] || "",
         i.status,
         i.resolved ? "Yes" : "No",
-        i.ts
+        formatEST(i.ts),
+        inv["order id"] || "",
+        inv["category"] || "",
+        inv["subcategory"] || "",
+        inv["customer"] || ""
       ]);
     });
   }
 
+  // Turn rows into CSV text
   const csvContent = rows
     .map(r =>
       r.map(v => {
