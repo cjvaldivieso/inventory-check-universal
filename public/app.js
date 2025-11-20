@@ -1,543 +1,119 @@
-/* public/app.js — Shappi Inventory App (XLSX + stable scanning)
-   - Chrome desktop + mobile CSV upload
-   - Scan Bin (QR) → validates format + CSV presence
-   - Auto-start item scanning after bin scan
-   - Scan Item (fallback) button
-   - Strong debounce to avoid duplicate item scans
-   - Table columns: Item, (hidden Expected Bin), Bin, WH Received, Status, (hidden Cat/Subcat), Audit, Resolved
-   - Export Table (visible cols only)
-   - Export Full Audit (XLSX, 2 tabs: Full Audit + Bin Summary)
-*/
-
 const socket = io();
 
-// --------------------------------------------------
-// CSV META
-// --------------------------------------------------
-let latestCSVTotal = 0;
-let latestCSVTime  = null;
+let currentBin = null;
+let scanning = false;
+let lastScanTime = 0;
 
-const csvInfo      = document.getElementById("csvInfo");
-const csvTimestamp = document.getElementById("csvTimestamp");
-const csvUpload    = document.getElementById("csvUpload");
+const SCAN_DELAY = 1200;
 
-// Live updates when anyone uploads CSV
-socket.on("csvUpdated", (meta) => {
-  latestCSVTotal = meta.total;
-  latestCSVTime  = meta.uploadedAt;
-
-  if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${meta.total})`;
-  if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
-
-  toast(`CSV updated • ${meta.total} items`, "info");
-});
-
-// Initial status (for all users)
-(async () => {
-  try {
-    const r = await fetch("/csv-status");
-    const d = await r.json();
-    if (typeof d.total !== "undefined") {
-      latestCSVTotal = d.total;
-      latestCSVTime  = d.uploadedAt;
-      if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${d.total})`;
-      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${d.uploadedAt || "(none)"}`;
-    }
-  } catch (err) {
-    console.error("csv-status error", err);
-  }
-})();
-
-// CSV upload handler (desktop + mobile)
-if (csvUpload) {
-  // allow selecting the same file twice
-  csvUpload.addEventListener("click", (e) => {
-    e.stopPropagation();
-    e.target.value = "";
-  });
-
-  csvUpload.addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const fd = new FormData();
-    fd.append("file", file);
-
-    try {
-      const res  = await fetch("/upload-csv", { method: "POST", body: fd });
-      const data = await res.json();
-
-      latestCSVTotal = data.total;
-      latestCSVTime  = data.uploadedAt;
-
-      if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${data.total})`;
-      if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${data.uploadedAt}`;
-
-      toast(`CSV uploaded • ${data.total} items`, "success");
-    } catch (err) {
-      console.error("CSV upload failed", err);
-      toast("CSV failed to upload", "error");
-    }
-  });
-}
-
-// --------------------------------------------------
-// AUDITOR SELECTOR
-// --------------------------------------------------
-const auditorSelect        = document.getElementById("auditorSelect");
-const currentAuditorSpan   = document.getElementById("currentAuditor");
-
-function setAuditor(name) {
-  if (!name) return;
-  localStorage.setItem("auditorName", name);
-  if (currentAuditorSpan) currentAuditorSpan.textContent = name;
-}
-
-// Load saved auditor
-(function initAuditor() {
-  if (!auditorSelect) return;
-  const saved = localStorage.getItem("auditorName");
-  if (saved) {
-    auditorSelect.value = saved;
-    setAuditor(saved);
-  }
-})();
-
-// Change handler
-if (auditorSelect) {
-  auditorSelect.addEventListener("change", () => {
-    const v = auditorSelect.value;
-    if (v === "__add_new__") {
-      const nn = prompt("Enter new user name:");
-      if (nn) {
-        const o = document.createElement("option");
-        o.value = nn;
-        o.textContent = nn;
-        auditorSelect.insertBefore(o, auditorSelect.lastElementChild);
-        auditorSelect.value = nn;
-        setAuditor(nn);
-      } else {
-        auditorSelect.value = localStorage.getItem("auditorName") || "";
-      }
-    } else {
-      setAuditor(v);
-    }
-  });
-}
-
-// --------------------------------------------------
-// DOM REFS & STATE
-// --------------------------------------------------
-const currentBinEl     = document.getElementById("currentBin");
-const logTbody         = document.getElementById("logTbody");
-const scanBinBtn       = document.getElementById("scanBinBtn");
-const scanItemBtn      = document.getElementById("scanItemBtn");
-const exportVisibleBtn = document.getElementById("exportVisible");
-const exportSummaryBtn = document.getElementById("exportSummary");
-
-let currentBin   = null;
-let scanning     = false;
-let activeStream = null;
-
-let lastScan = 0;
-const SCAN_COOLDOWN = 900; // ms
-
-// --------------------------------------------------
-// CAMERA PERMISSION (optional preload)
-// --------------------------------------------------
-(async () => {
-  try {
-    if (!navigator.permissions) return;
-    const status = await navigator.permissions.query({ name: "camera" });
-    if (status.state === "prompt") {
-      await navigator.mediaDevices.getUserMedia({ video: true });
-    }
-  } catch {
-    // ignore
-  }
-})();
-
-// --------------------------------------------------
-// OVERLAY HELPERS
-// --------------------------------------------------
-function createOverlay(titleText) {
-  const overlay = document.createElement("div");
-  overlay.className = "shappi-scan-overlay";
-  overlay.style = `
-    position: fixed; inset: 0;
-    background: rgba(0,0,0,0.92);
-    display: flex; flex-direction: column;
-    align-items: center;
-    padding-top: 40px;
-    z-index: 9999;
-  `;
-
-  const title = document.createElement("div");
-  title.textContent = titleText;
-  title.style = `
-    color:#fff; font-weight:700; font-size:20px;
-    margin-bottom:14px;
-  `;
-  overlay.appendChild(title);
-
-  const video = document.createElement("video");
-  video.playsInline = true;
-  video.muted = true;
-  video.autoplay = true;
-  video.style = `
-    width:92vw; max-width:650px;
-    border-radius:14px;
-  `;
-  overlay.appendChild(video);
-
-  const stopBtn = document.createElement("button");
-  stopBtn.textContent = "🛑 Stop Scanning";
-  stopBtn.style = `
-    margin-top:18px; background:#ff5555;
-    border:none;color:#fff;font-size:18px;
-    padding:12px 22px;border-radius:12px;
-    font-weight:600;
-  `;
-  overlay.appendChild(stopBtn);
-
-  document.body.appendChild(overlay);
-  return { overlay, video, stopBtn, title };
-}
-
-function stopScanner() {
-  try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch {}
-  activeStream = null;
-  scanning     = false;
-  document.querySelectorAll(".shappi-scan-overlay").forEach(o => o.remove());
-}
-
-// --------------------------------------------------
-// BIN VALIDATION
-// --------------------------------------------------
-function isValidBin(bin) {
-  return /^[A-Za-z]{3}$/.test(bin);
-}
-
-// --------------------------------------------------
-// SCAN BIN FLOW
-// --------------------------------------------------
-if (scanBinBtn) {
-  scanBinBtn.onclick = () => startBinScan();
-}
+document.getElementById("scanBinBtn").onclick = startBinScan;
+document.getElementById("scanItemBtn").onclick = startItemScan;
 
 async function startBinScan() {
-  stopScanner();
-  const { overlay, video, stopBtn } = createOverlay("Scan Bin");
+  const code = await launchScanner("Scan Bin QR");
 
-  let stopped = false;
-  stopBtn.onclick = () => { stopped = true; stopScanner(); };
+  if (!code.match(/^[A-Z]{3}$/)) return toast("Invalid Bin QR");
 
-  try {
-    activeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" }
-    });
-    video.srcObject = activeStream;
-    await video.play();
+  const auditor = localStorage.getItem("auditorName") || "Unknown";
 
-    const canvas = document.createElement("canvas");
-    const ctx    = canvas.getContext("2d");
+  const res = await fetch(`/audit/start/${code}?auditor=${auditor}`, { method: "POST" });
+  const data = await res.json();
 
-    const loop = async () => {
-      if (stopped) return;
+  if (data.error) return toast(data.error);
 
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width  = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  currentBin = code;
+  document.getElementById("currentBin").innerText = code;
 
-        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code  = jsQR(frame.data, frame.width, frame.height);
-
-        if (code && code.data) {
-          const bin = (code.data || "").trim().toUpperCase();
-
-          // Pattern check
-          if (!isValidBin(bin)) {
-            toast("Invalid Bin — must be 3 letters (AAA)", "error");
-            return; // keep scanning
-          }
-
-          // CSV bin existence check
-          try {
-            const resp = await fetch(`/validate-bin/${encodeURIComponent(bin)}`);
-            const info = await resp.json();
-            if (!info.valid) {
-              toast("Bin not found in CSV", "error");
-              return; // keep scanning
-            }
-          } catch (e) {
-            console.error("Bin validate error", e);
-            toast("Unable to validate bin. Check CSV.", "error");
-            return;
-          }
-
-          // Bin is valid + exists
-          currentBin = bin;
-          if (currentBinEl) currentBinEl.textContent = bin;
-
-          overlay.remove();
-          stopScanner();
-
-          const auditor = localStorage.getItem("auditorName") || "Unknown";
-          await fetch(`/audit/start/${encodeURIComponent(bin)}?auditor=${encodeURIComponent(auditor)}`, {
-            method: "POST"
-          });
-
-          toast(`Bin ${bin} selected`, "success");
-
-          // Auto-start item scanning
-          startItemScan();
-          return;
-        }
-      }
-
-      requestAnimationFrame(loop);
-    };
-
-    loop();
-  } catch (err) {
-    console.error("Camera error", err);
-    toast("Camera unavailable", "error");
-    overlay.remove();
-  }
-}
-
-// --------------------------------------------------
-// ITEM SCANNING (auto + fallback)
-// --------------------------------------------------
-if (scanItemBtn) {
-  scanItemBtn.onclick = () => startItemScan();
+  toast(`Bin ${code} loaded`);
+  startItemScan();
 }
 
 async function startItemScan() {
-  if (!currentBin) {
-    toast("Scan a bin first.", "warn");
-    return;
-  }
+  if (!currentBin) return toast("Scan bin first");
 
-  stopScanner();
-  scanning = true;
+  const code = await launchScanner("Scanning Items");
+  if (!code) return;
 
-  const { overlay, video, stopBtn, title } = createOverlay(`Scanning Items • Bin ${currentBin}`);
-  title.textContent = `Scanning Items • Bin ${currentBin}`;
+  const now = Date.now();
+  if (now - lastScanTime < SCAN_DELAY) return;
 
-  let stopped = false;
-  stopBtn.onclick = () => {
-    stopped = true;
-    stopScanner();
-    toast("Stopped scanning", "info");
-  };
+  lastScanTime = now;
 
-  try {
-    activeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" }
-    });
-    video.srcObject = activeStream;
-    await video.play();
-
-    const canvas = document.createElement("canvas");
-    const ctx    = canvas.getContext("2d");
-
-    const loop = async () => {
-      if (!scanning || stopped) return;
-
-      if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width  = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code  = jsQR(frame.data, frame.width, frame.height);
-
-        const now = Date.now();
-        if (code && code.data && now - lastScan > SCAN_COOLDOWN) {
-          lastScan = now;
-          flashOK();
-          const raw = (code.data || "").trim();
-          if (raw) {
-            await handleItemScan(raw);
-          }
-        }
-      }
-
-      requestAnimationFrame(loop);
-    };
-
-    loop();
-  } catch (err) {
-    console.error("Camera error", err);
-    toast("Camera error", "error");
-    stopScanner();
-  }
-}
-
-// --------------------------------------------------
-// HANDLE ITEM SCAN
-// --------------------------------------------------
-async function handleItemScan(itemId) {
   const auditor = localStorage.getItem("auditorName") || "Unknown";
 
-  try {
-    const res = await fetch(`/audit/scan?auditor=${encodeURIComponent(auditor)}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ binId: currentBin, itemId })
-    });
-    const data = await res.json();
-    const rec  = data.record || {};
+  const res = await fetch(`/audit/scan?auditor=${auditor}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ binId: currentBin, itemId: code })
+  });
 
-    let label = "";
-    let cls   = "";
+  const data = await res.json();
 
-    if (data.status === "match") {
-      label = "Correct";
-      cls   = "green";
-      toast(`✓ ${itemId} in correct bin`, "success");
-    } else if (data.status === "mismatch") {
-      label = `Move → ${data.correctBin || "?"}`;
-      cls   = "yellow";
-      toast(`Move ${itemId} → ${data.correctBin}`, "warn");
-    } else if (data.status === "remove-item") {
-      label = "Remove";
-      cls   = "red";
-      toast(`❌ Remove ${itemId} from bin`, "error");
-    } else if (data.status === "no-bin") {
-      label = "No CSV";
-      cls   = "red";
-      toast(`${itemId} not in CSV`, "error");
-    } else {
-      label = data.status || "Unknown";
-      cls   = "grey";
-    }
-
-    // Update or insert row (unique per itemId)
-    let row = logTbody.querySelector(`tr[data-item="${itemId}"]`);
-
-    const html = `
-      <td>${itemId}</td>
-      <td style="display:none;">${rec.expectedBin || "-"}</td>
-      <td>${currentBin || "-"}</td>
-      <td>${rec.received || "-"}</td>
-      <td>${rec.statusText || "-"}</td>
-      <td style="display:none;">${rec.category || "-"}</td>
-      <td style="display:none;">${rec.subcategory || "-"}</td>
-      <td><span class="status-pill ${cls}">${label}</span></td>
-      <td>${
-        data.status === "mismatch"
-          ? `<label>
-               <input type="checkbox"
-                      class="resolveToggle"
-                      data-bin="${currentBin}"
-                      data-item="${itemId}"> Move
-             </label>`
-          : "-"
-      }</td>
-    `;
-
-    if (row) {
-      row.innerHTML = html;
-    } else {
-      row = document.createElement("tr");
-      row.dataset.item = itemId;
-      row.innerHTML = html;
-      logTbody.prepend(row);
-    }
-  } catch (err) {
-    console.error("Scan error", err);
-    toast("Scan failed", "error");
-  }
+  addRow(code, data.status);
 }
 
-// --------------------------------------------------
-// RESOLVE "MOVE" CHECKBOX
-// --------------------------------------------------
-if (logTbody) {
-  logTbody.addEventListener("change", async (e) => {
-    const el = e.target;
-    if (!el.classList.contains("resolveToggle")) return;
+function addRow(item, status) {
+  const table = document.getElementById("logTbody");
 
-    const binId   = el.getAttribute("data-bin");
-    const itemId  = el.getAttribute("data-item");
-    const resolved = !!el.checked;
+  if (document.querySelector(`[data-item="${item}"]`)) return;
 
-    try {
-      await fetch("/audit/resolve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ binId, itemId, resolved })
+  const tr = document.createElement("tr");
+  tr.dataset.item = item;
+
+  tr.innerHTML = `
+    <td>${item}</td>
+    <td>${currentBin}</td>
+    <td>${status}</td>
+  `;
+
+  table.prepend(tr);
+}
+
+async function launchScanner(label) {
+  return new Promise(resolve => {
+    const overlay = document.createElement("div");
+    overlay.innerHTML = `
+      <div style="position:fixed;inset:0;background:#000c;z-index:1000;color:white;padding:20px">
+        <h2>${label}</h2>
+        <video id="cam" autoplay style="width:100%"></video>
+        <button onclick="this.parentElement.remove()">Stop</button>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const video = document.getElementById("cam");
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+      .then(stream => {
+        video.srcObject = stream;
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+
+        const tick = () => {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0);
+
+          const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(img.data, canvas.width, canvas.height);
+
+          if (code?.data) {
+            video.srcObject.getTracks().forEach(t => t.stop());
+            overlay.remove();
+            resolve(code.data.trim());
+          } else {
+            requestAnimationFrame(tick);
+          }
+        };
+        tick();
       });
-    } catch {
-      toast("Failed to update resolve state", "error");
-    }
   });
 }
 
-// --------------------------------------------------
-// EXPORT TABLE (VISIBLE COLUMNS ONLY)
-// --------------------------------------------------
-if (exportVisibleBtn) {
-  exportVisibleBtn.onclick = () => {
-    let csv = "Item,Bin,WH Received,Status,Audit,Resolved\n";
-
-    [...logTbody.children].forEach(row => {
-      const c = [...row.children].map(td => td.innerText.trim());
-      // c[0]=Item, c[1]=Expected(hidden), c[2]=Bin, c[3]=WH, c[4]=Status, c[5]=Cat(hidden), c[6]=Sub(hidden), c[7]=Audit, c[8]=Resolved
-      csv += `${c[0]},${c[2]},${c[3]},${c[4]},${c[7]},${c[8]}\n`;
-    });
-
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
-    a.href = url;
-    a.download = `shappi_table_${Date.now()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-}
-
-// --------------------------------------------------
-// EXPORT FULL AUDIT (XLSX, 2 TABS)
-// --------------------------------------------------
-if (exportSummaryBtn) {
-  exportSummaryBtn.onclick = () => {
-    window.location.href = "/export-summary";
-  };
-}
-
-// --------------------------------------------------
-// FLASH CONFIRMATION
-// --------------------------------------------------
-function flashOK() {
-  const d = document.createElement("div");
-  d.style = `
-    position:fixed; inset:0;
-    background:rgba(40,167,69,0.25);
-    z-index:9998;
-  `;
-  document.body.appendChild(d);
-  setTimeout(() => d.remove(), 180);
-}
-
-// --------------------------------------------------
-// TOAST
-// --------------------------------------------------
-function toast(msg, type = "info") {
-  const t = document.getElementById("toast");
-  if (!t) return;
-  t.textContent = msg;
-  t.style.display = "block";
-
-  t.style.background =
-    type === "success" ? "#28a745" :
-    type === "warn"    ? "#ffc107" :
-    type === "error"   ? "#dc3545" : "#6c47ff";
-
-  // Hold longer so user can act on "Move XXXX -> BIN"
-  setTimeout(() => { t.style.display = "none"; }, 5000);
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.innerText = msg;
+  el.style.display = "block";
+  setTimeout(() => el.style.display = "none", 5000);
 }
 

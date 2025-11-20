@@ -1,196 +1,65 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Shappi Inventory App</title>
-  <link rel="manifest" href="manifest.json" />
+<title>Shappi Inventory App</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+<style>
+body { background:#0B0C2A;color:white;text-align:center;font-family:Arial }
 
-  <style>
-    body {
-      font-family: Helvetica, Arial, sans-serif;
-      background: #0B0C2A;
-      color: #fff;
-      margin: 0;
-      text-align: center;
-      padding: 0;
-    }
-
-    header img {
-      height: 64px;
-      margin: 16px auto 4px;
-      display: block;
-    }
-
-    h2 {
-      color: #6c47ff;
-      margin-bottom: 8px;
-    }
-
-    .row {
-      margin: 12px auto;
-      max-width: 900px;
-    }
-
-    .btn {
-      background: #6c47ff;
-      border: none;
-      color: #fff;
-      border-radius: 10px;
-      padding: 10px 14px;
-      margin: 4px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 15px;
-    }
-    .btn:hover {
-      background: #5633d1;
-    }
-
-    /* CSV button (hidden input) */
-    .csv-btn {
-      background: #6c47ff;
-      padding: 10px 14px;
-      border-radius: 10px;
-      display: inline-block;
-      cursor: pointer;
-      font-weight: 600;
-      margin-bottom: 8px;
-    }
-    .csv-btn:hover {
-      background: #5633d1;
-    }
-
-    /* Table */
-    table {
-      margin: 16px auto;
-      border-collapse: collapse;
-      width: 95%;
-      max-width: 980px;
-      font-size: 14px;
-    }
-    th, td {
-      border: 1px solid #3b3e7a;
-      padding: 8px;
-    }
-    th {
-      background: #2c2f6c;
-      font-weight: 700;
-    }
-
-    #csvTimestamp {
-      color: #6c47ff;
-      font-weight: 500;
-      margin-top: 8px;
-    }
-    #csvInfo {
-      color: #bdbde6;
-      font-size: 13px;
-      margin-top: 6px;
-    }
-
-    /* Mobile fix */
-    @media (max-width: 480px) {
-      .btn {
-        width: 90%;
-        font-size: 14px;
-      }
-      table {
-        font-size: 12px;
-      }
-    }
-  </style>
+button {
+  background:#6c47ff;
+  color:white;
+  padding:10px;
+  border:none;
+  border-radius:10px;
+  margin:6px;
+  font-size:16px;
+}
+table { width:95%;margin:auto }
+td,th { border:1px solid #555;padding:6px }
+</style>
 </head>
 
 <body>
-  <header>
-    <img src="icons/shappi-inventory.png" alt="Shappi Logo"
-         onerror="this.src='shappi-inventory.png'">
-    <h2>📦 Shappi Inventory App</h2>
-  </header>
 
-  <!-- CSV UPLOAD -->
-  <div class="row">
-    <label class="csv-btn" for="csvUpload">Upload CSV</label>
-    <input type="file" id="csvUpload" accept=".csv" style="display:none" />
+<h2>📦 Shappi Inventory App</h2>
 
-    <div id="csvInfo">No CSV uploaded yet.</div>
-    <p id="csvTimestamp">Last Updated: (none)</p>
-  </div>
+<label for="csvUpload" class="btn">Upload CSV</label>
+<input id="csvUpload" type="file" accept=".csv" hidden>
 
-  <!-- Select User -->
-  <div class="row">
-    <label for="auditorSelect"><b>Select User:</b></label><br>
-    <select id="auditorSelect" class="btn" style="padding:8px 10px; margin-top:6px;">
-      <option value="">-- Choose Your Name --</option>
-      <option>Anslee</option>
-      <option>Caz</option>
-      <option>CJ</option>
-      <option>Eric</option>
-      <option>Greg</option>
-      <option value="__add_new__">+ Add New User</option>
-    </select>
+<div id="csvInfo">No CSV</div>
 
-    <div id="currentAuditorDisplay" style="margin-top:10px;font-weight:700;color:#6c47ff;">
-      Current User: <span id="currentAuditor">None</span>
-    </div>
-  </div>
+<button id="scanBinBtn">Scan Bin</button>
+<button id="scanItemBtn">Scan Item</button>
+<button onclick="window.location='/export-full-audit'">Export Full Audit</button>
 
-  <!-- Controls -->
-  <div class="row">
-    <button id="scanBinBtn" class="btn">Scan Bin</button>
-    <button id="scanItemBtn" class="btn">Scan Item</button>
-  </div>
+<div>Current Bin: <span id="currentBin">None</span></div>
 
-  <div class="row">
-    <button id="exportVisible" class="btn">Export Table</button>
-    <button id="downloadAuditCsv" class="btn">Export Full Audit</button>
-  </div>
+<table>
+<thead><tr><th>Item</th><th>Bin</th><th>Status</th></tr></thead>
+<tbody id="logTbody"></tbody>
+</table>
 
-  <div class="row" style="font-weight:700">
-    Current Bin: <span id="currentBin">None</span>
-  </div>
+<div id="toast" style="display:none;background:#222;padding:10px;margin-top:10px"></div>
 
-  <!-- Results Table -->
-  <div class="row">
-    <table>
-      <thead>
-        <tr>
-          <th>Item</th>
-          <th style="display:none;">Expected Bin</th>
-          <th>Bin</th>
-          <th>WH Received</th>
-          <th>Status</th>
-          <th>Audit</th>
-          <th>Resolved</th>
-        </tr>
-      </thead>
-      <tbody id="logTbody"></tbody>
-    </table>
-  </div>
+<script src="app.js"></script>
 
-  <!-- Toast -->
-  <div id="toast" style="
-    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
-    background: #1e293b; color: #fff; border: 1px solid #6c47ff;
-    padding: 10px 14px; border-radius: 10px;
-    display: none; z-index: 99999;">
-  </div>
+<script>
+document.getElementById("csvUpload").addEventListener("change", async e=>{
+  const fd = new FormData();
+  fd.append("csv", e.target.files[0]);
 
-  <!-- Service worker -->
-  <script>
-    if ("serviceWorker" in navigator) {
-      window.addEventListener("load", async () => {
-        try { await navigator.serviceWorker.register("/service-worker.js"); }
-        catch (e) { console.error("SW registration failed", e); }
-      });
-    }
-  </script>
+  const res = await fetch("/upload-csv", { method:"POST", body: fd});
+  const d = await res.json();
 
-  <script src="app.js?v=18"></script>
+  document.getElementById("csvInfo").innerText =
+    `Loaded ${d.total} items · ${d.uploadedAt}`;
+});
+</script>
+
 </body>
 </html>
 
