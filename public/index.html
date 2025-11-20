@@ -1,65 +1,215 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<title>Shappi Inventory App</title>
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<script src="/socket.io/socket.io.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+  <meta charset="UTF-8" />
+  <title>Shappi Inventory App</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-<style>
-body { background:#0B0C2A;color:white;text-align:center;font-family:Arial }
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
 
-button {
-  background:#6c47ff;
-  color:white;
-  padding:10px;
-  border:none;
-  border-radius:10px;
-  margin:6px;
-  font-size:16px;
-}
-table { width:95%;margin:auto }
-td,th { border:1px solid #555;padding:6px }
-</style>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: #050721;
+      color: #fff;
+      text-align: center;
+    }
+    header {
+      padding: 18px 8px 6px;
+    }
+    header h1 {
+      margin: 6px 0 2px;
+      font-size: 26px;
+      font-weight: 700;
+    }
+    .emoji-box {
+      font-size: 22px;
+      margin-right: 6px;
+    }
+    .row {
+      margin: 8px auto;
+      max-width: 900px;
+    }
+    .btn {
+      background: #6c47ff;
+      border: none;
+      color: #fff;
+      border-radius: 999px;
+      padding: 10px 18px;
+      margin: 4px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 15px;
+      min-width: 140px;
+    }
+    .btn:hover {
+      background: #5633d1;
+    }
+    .btn-secondary {
+      background: #111827;
+    }
+    #csvInfo {
+      font-size: 13px;
+      color: #d1d5ff;
+      margin-top: 6px;
+    }
+    #csvTimestamp {
+      font-size: 13px;
+      color: #9ca3ff;
+    }
+    select {
+      padding: 8px 10px;
+      border-radius: 10px;
+      border: none;
+      font-weight: 600;
+      background: #6c47ff;
+      color: #fff;
+    }
+    table {
+      margin: 16px auto 40px;
+      border-collapse: collapse;
+      width: 95%;
+      max-width: 980px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid #2f345c;
+      padding: 6px 4px;
+    }
+    th {
+      background: #14173d;
+    }
+
+    .status-pill {
+      padding: 2px 7px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      display: inline-block;
+    }
+    .status-green { background: #16a34a; }
+    .status-yellow { background: #eab308; }
+    .status-red { background: #dc2626; }
+
+    #toast {
+      position: fixed;
+      left: 50%;
+      bottom: 22px;
+      transform: translateX(-50%);
+      background: #111827;
+      border-radius: 999px;
+      padding: 10px 18px;
+      color: #fff;
+      border: 1px solid #6c47ff;
+      display: none;
+      z-index: 9999;
+      font-size: 14px;
+    }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.93);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      padding-top: 38px;
+      z-index: 9998;
+    }
+    .overlay video {
+      width: 92vw;
+      max-width: 620px;
+      border-radius: 16px;
+    }
+    .overlay-title {
+      color: #fff;
+      font-size: 20px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .overlay .stop-btn {
+      margin-top: 18px;
+      background: #ef4444;
+      border: none;
+      color: #fff;
+      padding: 12px 22px;
+      border-radius: 999px;
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    @media (min-width: 768px) {
+      header h1 { font-size: 30px; }
+      .btn { font-size: 15px; }
+    }
+  </style>
 </head>
-
 <body>
+  <header>
+    <h1><span class="emoji-box">📦</span>Shappi Inventory App</h1>
+  </header>
 
-<h2>📦 Shappi Inventory App</h2>
+  <!-- CSV upload -->
+  <div class="row">
+    <button id="csvUploadBtn" class="btn">Upload CSV</button>
+    <input type="file" id="csvUpload" accept=".csv" style="display:none" />
+    <div id="csvInfo">No CSV</div>
+    <div id="csvTimestamp">Last Updated: (none)</div>
+  </div>
 
-<label for="csvUpload" class="btn">Upload CSV</label>
-<input id="csvUpload" type="file" accept=".csv" hidden>
+  <!-- Auditor -->
+  <div class="row">
+    <label for="auditorSelect"><b>Select User:</b></label>
+    <select id="auditorSelect">
+      <option value="">-- Choose Your Name --</option>
+      <option>Anslee</option>
+      <option>Caz</option>
+      <option>CJ</option>
+      <option>Eric</option>
+      <option>Greg</option>
+      <option>Justin</option>
+      <option value="__add_new__">+ Add New User</option>
+    </select>
+    <div style="margin-top:6px;font-weight:600;color:#a5b4ff;">
+      Current User: <span id="currentAuditor">None</span>
+    </div>
+  </div>
 
-<div id="csvInfo">No CSV</div>
+  <!-- Controls -->
+  <div class="row">
+    <button id="scanBinBtn" class="btn">Scan Bin</button>
+    <button id="scanItemBtn" class="btn">Scan Item</button>
+    <button id="exportVisible" class="btn btn-secondary">Export Table</button>
+    <button id="exportSummaryBtn" class="btn btn-secondary">Export Full Audit</button>
+  </div>
 
-<button id="scanBinBtn">Scan Bin</button>
-<button id="scanItemBtn">Scan Item</button>
-<button onclick="window.location='/export-full-audit'">Export Full Audit</button>
+  <div class="row" style="font-weight:700;">
+    Current Bin: <span id="currentBin">None</span>
+  </div>
 
-<div>Current Bin: <span id="currentBin">None</span></div>
+  <!-- Results table -->
+  <div class="row">
+    <table>
+      <thead>
+        <tr>
+          <th>Item</th>
+          <th>Bin</th>
+          <th>WH Received</th>
+          <th>Status</th>
+          <th>Audit</th>
+          <th>Resolved</th>
+        </tr>
+      </thead>
+      <tbody id="logTbody"></tbody>
+    </table>
+  </div>
 
-<table>
-<thead><tr><th>Item</th><th>Bin</th><th>Status</th></tr></thead>
-<tbody id="logTbody"></tbody>
-</table>
+  <div id="toast"></div>
 
-<div id="toast" style="display:none;background:#222;padding:10px;margin-top:10px"></div>
-
-<script src="app.js"></script>
-
-<script>
-document.getElementById("csvUpload").addEventListener("change", async e=>{
-  const fd = new FormData();
-  fd.append("csv", e.target.files[0]);
-
-  const res = await fetch("/upload-csv", { method:"POST", body: fd});
-  const d = await res.json();
-
-  document.getElementById("csvInfo").innerText =
-    `Loaded ${d.total} items · ${d.uploadedAt}`;
-});
-</script>
-
+  <script src="app.js?v=reset1"></script>
 </body>
 </html>
 
