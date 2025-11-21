@@ -1,0 +1,335 @@
+// ----------------------------------------------------------
+// CSV UPLOAD
+// ----------------------------------------------------------
+uploadBtn.addEventListener("click", () => {
+  csvFileInput.click();
+});
+
+csvFileInput.addEventListener("change", async (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const fd = new FormData();
+  fd.append("file", file);
+
+  csvStatusEl.textContent = "Uploading…";
+
+  try {
+    const res = await fetch("/upload-csv", {
+      method: "POST",
+      body: fd,
+    });
+
+    const data = await res.json();
+
+    if (!data.ok) {
+      csvStatusEl.textContent = "Upload failed.";
+      toast("CSV upload failed", "error");
+      return;
+    }
+
+    const dt = new Date(data.uploadedAt);
+    const pretty = dt.toLocaleString("en-US", {
+      timeZone: "America/New_York",
+    });
+    csvStatusEl.textContent = `CSV Loaded (${data.total}) · ${pretty}`;
+    currentBin = null;
+    currentBinEl.textContent = "None";
+    logTbody.innerHTML = "";
+    toast("CSV uploaded successfully", "success");
+  } catch (err) {
+    console.error("CSV upload error", err);
+    csvStatusEl.textContent = "Upload failed.";
+    toast("CSV upload failed", "error");
+  } finally {
+    csvFileInput.value = "";
+  }
+});
+
+// ----------------------------------------------------------
+// Scanner overlay
+// ----------------------------------------------------------
+function createScannerOverlay(titleText, onCodeDetected) {
+  const overlay = document.createElement("div");
+  overlay.style.position = "fixed";
+  overlay.style.inset = "0";
+  overlay.style.background = "rgba(0, 0, 0, 0.95)";
+  overlay.style.display = "flex";
+  overlay.style.flexDirection = "column";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "flex-start";
+  overlay.style.paddingTop = "40px";
+  overlay.style.zIndex = "9998";
+
+  const title = document.createElement("div");
+  title.textContent = titleText;
+  title.style.color = "#fff";
+  title.style.fontSize = "22px";
+  title.style.fontWeight = "700";
+  title.style.marginBottom = "18px";
+  overlay.appendChild(title);
+
+  const video = document.createElement("video");
+  video.playsInline = true;
+  video.muted = true;
+  video.autoplay = true;
+  video.style.width = "92vw";
+  video.style.maxWidth = "650px";
+  video.style.borderRadius = "14px";
+  overlay.appendChild(video);
+
+  const stopBtn = document.createElement("button");
+  stopBtn.textContent = "🛑 Stop Scanning";
+  stopBtn.style.marginTop = "20px";
+  stopBtn.style.background = "#ff5555";
+  stopBtn.style.color = "#fff";
+  stopBtn.style.border = "none";
+  stopBtn.style.padding = "12px 22px";
+  stopBtn.style.borderRadius = "12px";
+  stopBtn.style.fontWeight = "600";
+  stopBtn.style.fontSize = "18px";
+  overlay.appendChild(stopBtn);
+
+  document.body.appendChild(overlay);
+
+  let stopped = false;
+  let stream = null;
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    try {
+      if (stream) {
+        stream.getTracks().forEach((t) => t.stop());
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    overlay.remove();
+  };
+
+  stopBtn.onclick = stop;
+
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    toast("Camera not supported in this browser", "error");
+    stop();
+    return;
+  }
+
+  navigator.mediaDevices
+    .getUserMedia({ video: { facingMode: "environment" } })
+    .then((s) => {
+      stream = s;
+      video.srcObject = s;
+      return video.play();
+    })
+    .then(() => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+
+      let lastScanTime = 0;
+      const COOLDOWN = 800; // ms between scans
+
+      const loop = async () => {
+        if (stopped) return;
+
+        if (video.readyState === video.HAVE_ENOUGH_DATA) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(frame.data, frame.width, frame.height);
+
+          const now = Date.now();
+          if (code && code.data && now - lastScanTime > COOLDOWN) {
+            lastScanTime = now;
+            try {
+              await onCodeDetected(code.data, stop);
+            } catch (err) {
+              console.error("onCodeDetected error", err);
+            }
+          }
+        }
+
+        requestAnimationFrame(loop);
+      };
+
+      requestAnimationFrame(loop);
+    })
+    .catch((err) => {
+      console.error("Camera error", err);
+      toast("Camera error", "error");
+      stop();
+    });
+}
+
+// ----------------------------------------------------------
+// Scan Bin
+// ----------------------------------------------------------
+scanBinBtn.addEventListener("click", () => {
+  createScannerOverlay("Scan Bin", async (rawValue, stop) => {
+    const binId = normalizeBin(rawValue);
+
+    if (!binId) {
+      toast("Invalid bin QR", "error");
+      return;
+    }
+
+    try {
+      const res = await fetch("/scan-bin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ binId }),
+      });
+
+      const data = await res.json();
+
+      if (!data.ok && data.error === "no-csv") {
+        toast("Upload a CSV before scanning bins.", "error");
+        return;
+      }
+
+      if (!data.ok) {
+        toast("Unable to validate bin. Check CSV.", "error");
+        return;
+      }
+
+      currentBin = data.binId;
+      currentBinEl.textContent = currentBin;
+      toast(`Current bin set to ${currentBin}`, "success");
+      stop();
+    } catch (err) {
+      console.error("scan-bin error", err);
+      toast("Bin scan failed", "error");
+    }
+  });
+});
+
+// ----------------------------------------------------------
+// Scan Item
+// ----------------------------------------------------------
+scanItemBtn.addEventListener("click", () => {
+  if (!currentBin) {
+    toast("Scan a bin first.", "warn");
+    return;
+  }
+
+  createScannerOverlay(`Scan Item • Bin ${currentBin}`, async (rawValue) => {
+    const itemId = normalizeId(rawValue);
+
+    if (!itemId) {
+      toast("Invalid item QR", "error");
+      return;
+    }
+
+    try {
+      const res = await fetch("/scan-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ binId: currentBin, itemId }),
+      });
+
+      const data = await res.json();
+
+      if (!data.ok && data.error === "no-csv") {
+        toast("Upload a CSV before scanning items.", "error");
+        return;
+      }
+
+      if (!data.ok) {
+        toast("Item scan failed", "error");
+        return;
+      }
+
+      const audit = data.audit || {};
+      addAuditRow(audit);
+
+      // User-friendly status message
+      if (data.status === "match") {
+        toast(`✓ ${itemId} is in the correct bin`, "success");
+      } else if (data.status === "mismatch") {
+        toast(
+          `Move ${itemId} → ${audit.expectedBin || "(unknown bin)"}`,
+          "warn"
+        );
+      } else if (data.status === "no-bin") {
+        toast(`${itemId} has no bin assigned in CSV`, "warn");
+      } else if (data.status === "not-in-csv") {
+        toast(`${itemId} not found in CSV`, "error");
+      } else {
+        toast(`${itemId} scanned (${data.status})`, "info");
+      }
+    } catch (err) {
+      console.error("scan-item error", err);
+      toast("Item scan failed", "error");
+    }
+  });
+});
+
+// ----------------------------------------------------------
+// Add audit row to table
+// ----------------------------------------------------------
+function addAuditRow(audit) {
+  const tr = document.createElement("tr");
+  tr.className = audit.auditStatus || "";
+
+  const tdItem = document.createElement("td");
+  tdItem.textContent = audit.itemId || "";
+  const tdBin = document.createElement("td");
+  tdBin.textContent = audit.scannedBin || "";
+  const tdStatus = document.createElement("td");
+
+  let label = "";
+  if (audit.auditStatus === "match") {
+    label = "Correct Bin";
+  } else if (audit.auditStatus === "mismatch") {
+    label = `Move → ${audit.expectedBin || "?"}`;
+  } else if (audit.auditStatus === "no-bin") {
+    label = "No bin in CSV";
+  } else if (audit.auditStatus === "not-in-csv") {
+    label = "Not in CSV";
+  } else {
+    label = audit.auditStatus || "";
+  }
+  tdStatus.textContent = label;
+
+  tr.appendChild(tdItem);
+  tr.appendChild(tdBin);
+  tr.appendChild(tdStatus);
+
+  // Most recent on top
+  logTbody.prepend(tr);
+}
+
+// ----------------------------------------------------------
+// Export table (visible rows only)
+// ----------------------------------------------------------
+exportTableBtn.addEventListener("click", () => {
+  let csv = "Item,Bin,Status\n";
+
+  [...logTbody.children].forEach((row) => {
+    const cells = [...row.children].map((td) =>
+      `"${td.innerText.replace(/"/g, '""').trim()}"`
+    );
+    csv += cells.join(",") + "\n";
+  });
+
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `shappi_table_${Date.now()}.csv`;
+  a.click();
+
+  URL.revokeObjectURL(url);
+});
+
+// ----------------------------------------------------------
+// Export full audit (all scans on server)
+// ----------------------------------------------------------
+exportFullAuditBtn.addEventListener("click", () => {
+  window.location.href = "/export-full-audit";
+});
+

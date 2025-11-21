@@ -1,282 +1,324 @@
-// server.js — Shappi Inventory Backend (stable CSV + scan + exports)
-
 import express from "express";
-import http from "http";
-import path from "path";
-import fs from "fs";
 import multer from "multer";
 import csv from "csv-parser";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import fs from "fs";
+import cors from "cors";
+import http from "http";
+import { Server } from "socket.io";
+import moment from "moment-timezone";
 
 const app = express();
 const server = http.createServer(app);
+const io = new Server(server);
 
-// -------------------------------------------------------------
-// Directories
-// -------------------------------------------------------------
-const DATA_DIR = path.join(__dirname, "data");
-const UPLOADS_DIR = path.join(__dirname, "uploads");
-const CANONICAL_CSV = path.join(DATA_DIR, "latest.csv");
-const META_PATH = path.join(DATA_DIR, "csv-meta.json");
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-// Multer for CSV uploads
-const upload = multer({ dest: UPLOADS_DIR });
-
-// JSON body parser for scan routes
+app.use(cors());
 app.use(express.json());
 
-// Static frontend
-app.use(express.static(path.join(__dirname, "public")));
-
-// -------------------------------------------------------------
-// In-memory state
-// -------------------------------------------------------------
-let items = [];                // raw CSV rows
-let itemsById = new Map();     // normalized Item ID -> row
-let binsSet = new Set();       // normalized Bin ID
-let audits = [];               // list of scan results
-let csvMeta = { total: 0, uploadedAt: null };
-
-// Normalizers (match CSV + scanner input safely)
-const normalizeId = (v) => String(v ?? "").trim();
-const normalizeBin = (v) => String(v ?? "").trim().toUpperCase();
-
-// -------------------------------------------------------------
-// Helpers
-// -------------------------------------------------------------
-function rebuildIndexes(rows) {
-  items = rows;
-  itemsById = new Map();
-  binsSet = new Set();
-  audits = []; // reset audits when a new CSV is uploaded
-
-  for (const row of rows) {
-    const itemId = normalizeId(row["Item ID"]);
-    const binId = normalizeBin(row["Warehouse Bin ID"]);
-
-    if (itemId) itemsById.set(itemId, row);
-    if (binId) binsSet.add(binId);
-  }
-
-  csvMeta.total = items.length;
-}
-
-function loadCsvFile(filePath) {
-  return new Promise((resolve, reject) => {
-    const rows = [];
-    fs.createReadStream(filePath)
-      .pipe(csv())
-      .on("data", (row) => rows.push(row))
-      .on("end", () => resolve(rows))
-      .on("error", reject);
-  });
-}
-
-async function initFromDisk() {
-  try {
-    if (fs.existsSync(CANONICAL_CSV)) {
-      const rows = await loadCsvFile(CANONICAL_CSV);
-      rebuildIndexes(rows);
+// Serve static files with no-cache for HTML/CSS/JS
+app.use(express.static("public", {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith(".html") || filePath.endsWith(".js") || filePath.endsWith(".css")) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
     }
-
-    if (fs.existsSync(META_PATH)) {
-      const metaRaw = fs.readFileSync(META_PATH, "utf8");
-      csvMeta = { ...csvMeta, ...JSON.parse(metaRaw) };
-    }
-  } catch (err) {
-    console.error("Failed to init from disk:", err);
   }
+}));
+
+// --------------------------------------------------
+// GLOBAL STATE
+// --------------------------------------------------
+let inventoryData = [];
+let inventoryMap  = {}; // ITEM ID → record
+let lastCsvTimestamp = null;
+let audits = {};        // binId → { auditor, startTime, items[] }
+
+const upload = multer({ dest: "uploads/" });
+
+// Helper: format timestamps in EST as MM/DD/YYYY hh:mm AM/PM
+function formatEST(ts) {
+  if (!ts) return "";
+  return moment(ts).tz("America/New_York").format("MM/DD/YYYY hh:mm A");
 }
 
-initFromDisk();
+// --------------------------------------------------
+// CSV UPLOAD
+// --------------------------------------------------
+app.post("/upload-csv", upload.single("file"), (req, res) => {
+  const uploadTime = moment().tz("America/New_York").format("MM/DD/YYYY hh:mm A");
+  const rows = [];
 
-// -------------------------------------------------------------
-// Routes
-// -------------------------------------------------------------
+  fs.createReadStream(req.file.path)
+    .pipe(csv())
+    .on("data", (d) => {
+      const clean = {};
+      for (const k in d) {
+        clean[k.trim().toLowerCase()] = (d[k] || "").toString().trim();
+      }
+      rows.push(clean);
+    })
+    .on("end", () => {
+      try { fs.unlinkSync(req.file.path); } catch {}
 
-// CSV status (for showing "CSV Loaded" + timestamp)
-app.get("/csv-status", (req, res) => {
-  res.json(csvMeta);
-});
+      inventoryData = rows;
+      inventoryMap  = {};
+      lastCsvTimestamp = uploadTime;
 
-// Upload CSV
-app.post("/upload-csv", upload.single("file"), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ ok: false, error: "no-file" });
-  }
+      for (const row of rows) {
+        const id = (row["item id"] || "").toUpperCase();
+        if (id) inventoryMap[id] = row;
+      }
 
-  try {
-    const rows = await loadCsvFile(req.file.path);
-    rebuildIndexes(rows);
+      io.emit("csvUpdated", {
+        total: rows.length,
+        uploadedAt: uploadTime
+      });
 
-    // Save canonical copy + metadata so restarts still know the latest CSV
-    fs.copyFileSync(req.file.path, CANONICAL_CSV);
-    csvMeta.uploadedAt = new Date().toISOString();
-    fs.writeFileSync(META_PATH, JSON.stringify(csvMeta, null, 2));
-
-    res.json({
-      ok: true,
-      total: csvMeta.total,
-      uploadedAt: csvMeta.uploadedAt,
+      res.json({
+        message: "CSV uploaded",
+        total: rows.length,
+        uploadedAt: uploadTime
+      });
+    })
+    .on("error", (err) => {
+      console.error("CSV Parse Error:", err);
+      res.status(500).json({ error: "CSV parsing failed" });
     });
-  } catch (err) {
-    console.error("CSV upload parse error:", err);
-    res.status(500).json({ ok: false, error: "parse-failed" });
-  }
 });
 
-// Scan Bin — validate that the bin exists in the CSV
-app.post("/scan-bin", (req, res) => {
-  const rawBin = req.body?.binId;
-  const binId = normalizeBin(rawBin);
-
-  if (!binId) {
-    return res.status(400).json({ ok: false, error: "missing-bin" });
-  }
-
-  if (!csvMeta.total || binsSet.size === 0) {
-    return res.json({ ok: false, error: "no-csv" });
-  }
-
-  if (!binsSet.has(binId)) {
-    return res.json({ ok: false, error: "invalid-bin", binId });
-  }
-
-  res.json({ ok: true, binId });
+// --------------------------------------------------
+// CSV STATUS
+// --------------------------------------------------
+app.get("/csv-status", (req, res) => {
+  res.json({
+    total: inventoryData.length,
+    uploadedAt: lastCsvTimestamp
+  });
 });
 
-// Scan Item — compare against CSV and record audit entry
-app.post("/scan-item", (req, res) => {
-  const binId = normalizeBin(req.body?.binId);
-  const itemId = normalizeId(req.body?.itemId);
+// --------------------------------------------------
+// BIN VALIDATION ENDPOINT (used by front-end)
+// --------------------------------------------------
+app.get("/validate-bin/:binId", (req, res) => {
+  const bin = req.params.binId.toUpperCase();
 
-  if (!binId || !itemId) {
-    return res.status(400).json({ ok: false, error: "missing-fields" });
-  }
+  const valid = inventoryData.some(row =>
+    (row["warehouse bin id"] || "").toUpperCase() === bin
+  );
 
-  if (!csvMeta.total || binsSet.size === 0) {
-    return res.json({ ok: false, error: "no-csv" });
-  }
+  res.json({ valid });
+});
 
-  const row = itemsById.get(itemId);
-  let auditStatus = "";
-  let expectedBin = "";
-  let whReceived = "";
-  let shappiStatus = "";
-  let category = "";
-  let subcategory = "";
-  let customer = "";
+// --------------------------------------------------
+// START AUDIT FOR BIN
+// --------------------------------------------------
+app.post("/audit/start/:binId", (req, res) => {
+  const binId = req.params.binId.toUpperCase();
+  const auditor = (req.query.auditor || "Unknown").toString();
 
-  if (!row) {
-    auditStatus = "not-in-csv";
-  } else {
-    expectedBin = normalizeBin(row["Warehouse Bin ID"]);
-    whReceived = row["Received at Warehouse"] || "";
-    shappiStatus = row["status"] || "";
-    category = row["category"] || "";
-    subcategory = row["Subcategory"] || "";
-    customer = row["customer"] || "";
-
-    if (!expectedBin) {
-      auditStatus = "no-bin";
-    } else if (expectedBin === binId) {
-      auditStatus = "match";
-    } else {
-      auditStatus = "mismatch";
-    }
-  }
-
-  const auditRecord = {
-    binId,
-    itemId,
-    expectedBin,
-    scannedBin: binId,
-    whReceived,
-    shappiStatus,
-    category,
-    subcategory,
-    customer,
-    auditStatus,
-    timestamp: new Date().toISOString(),
+  audits[binId] = {
+    auditor,
+    startTime: new Date().toISOString(),
+    items: []
   };
 
-  audits.push(auditRecord);
+  io.emit("auditStarted", { binId, auditor });
+  res.json({ message: `Audit started for ${binId}`, auditor });
+});
+
+// --------------------------------------------------
+// SCAN ITEM
+// --------------------------------------------------
+app.post("/audit/scan", (req, res) => {
+  const { binId, itemId } = req.body;
+  const auditor = (req.query.auditor || "Unknown").toString();
+
+  if (!binId)  return res.status(400).json({ error: "Missing binId" });
+  if (!itemId) return res.status(400).json({ error: "Missing itemId" });
+
+  const bin = binId.toUpperCase();
+  const id  = itemId.toUpperCase();
+
+  if (!audits[bin]) {
+    return res.status(400).json({ error: "Bin not active. Scan bin first." });
+  }
+
+  const record = inventoryMap[id];
+  let status = "match";
+  let expectedBin = record?.["warehouse bin id"] || "-";
+
+  if (!record) {
+    status = "no-bin";
+  } else {
+    const s = (record["status"] || "").toLowerCase();
+    if (["shappi closed", "abandoned", "shappi canceled"].includes(s)) {
+      status = "remove-item";
+    } else if ((expectedBin || "").toUpperCase() !== bin) {
+      status = "mismatch";
+    }
+  }
+
+  const auditEntry = {
+    itemId: id,
+    expectedBin,
+    scannedBin: bin,
+    status,
+    resolved: false,
+    ts: new Date().toISOString()
+  };
+
+  audits[bin].items.unshift(auditEntry);
+  io.emit("itemScanned", { binId: bin, auditor, item: auditEntry });
 
   res.json({
-    ok: true,
-    status: auditStatus,
-    audit: auditRecord,
+    status,
+    correctBin: expectedBin !== "-" ? expectedBin : null,
+    record: record ? {
+      expectedBin,
+      received: record["received at warehouse"] || "",
+      statusText: record["status"] || ""
+    } : null
   });
 });
 
-// Export full audit as CSV
-app.get("/export-full-audit", (req, res) => {
-  if (!audits.length) {
-    return res.status(400).send("No audit data yet.");
+// --------------------------------------------------
+// RESOLVE MOVE
+// --------------------------------------------------
+app.post("/audit/resolve", (req, res) => {
+  const { binId, itemId, resolved } = req.body;
+  const bin = (binId || "").toUpperCase();
+  const id  = (itemId || "").toUpperCase();
+
+  if (!audits[bin]) return res.status(404).json({ error: "Audit not found" });
+
+  const row = audits[bin].items.find(i => i.itemId === id);
+  if (!row) return res.status(404).json({ error: "Item not found in audit" });
+
+  row.resolved = !!resolved;
+
+  io.emit("itemResolved", { binId: bin, itemId: id, resolved });
+  res.json({ message: "Updated", binId: bin, itemId: id });
+});
+
+// --------------------------------------------------
+// EXPORT FULL AUDIT (with BIN SUMMARY + extra fields)
+// --------------------------------------------------
+app.get("/export-summary", (req, res) => {
+  const rows = [];
+
+  // 1) BIN SUMMARY HEADER
+  rows.push(["BIN SUMMARY"]);
+  rows.push([
+    "Bin ID",
+    "Expected Items",
+    "Scanned Items",
+    "Missing Items",
+    "Missing Item IDs"
+  ]);
+
+  // Build summary per bin (for bins that have an audit)
+  for (const [binId, audit] of Object.entries(audits)) {
+    // All expected items in this bin (from CSV)
+    const expectedSet = new Set(
+      inventoryData
+        .filter(row => (row["warehouse bin id"] || "").toUpperCase() === binId)
+        .map(row => (row["item id"] || "").toUpperCase())
+        .filter(Boolean)
+    );
+
+    // Items from expectedSet that were scanned in this bin
+    const scannedExpected = new Set(
+      audit.items
+        .map(i => i.itemId)
+        .filter(id => expectedSet.has(id))
+    );
+
+    const missingIds = [...expectedSet].filter(id => !scannedExpected.has(id));
+
+    const expectedCount = expectedSet.size;
+    const scannedCount  = scannedExpected.size;
+    const missingCount  = missingIds.length;
+
+    rows.push([
+      binId,
+      expectedCount,
+      scannedCount,
+      missingCount,
+      missingIds.join(" ")
+    ]);
   }
 
-  const header = [
+  // Blank line between summary and detail
+  rows.push([]);
+  rows.push(["FULL AUDIT DETAILS"]);
+
+  // 2) FULL ITEM-LEVEL DETAILS HEADER
+  rows.push([
     "Bin ID",
+    "Auditor",
+    "# Items",
+    "Start Time",
     "Item ID",
     "Expected Bin",
     "Scanned Bin",
     "WH Received",
     "Shappi Status",
     "Audit Status",
+    "Resolved",
+    "Scan Timestamp",
+    "Order ID",
     "Category",
     "Subcategory",
-    "Customer",
-    "Scan Timestamp",
-  ];
+    "Customer"
+  ]);
 
-  const lines = [header.join(",")];
+  // 3) ITEM-LEVEL ROWS
+  for (const [binId, audit] of Object.entries(audits)) {
+    const totalItems = audit.items.length;
 
-  for (const a of audits) {
-    const cells = [
-      a.binId,
-      a.itemId,
-      a.expectedBin,
-      a.scannedBin,
-      a.whReceived,
-      a.shappiStatus,
-      a.auditStatus,
-      a.category,
-      a.subcategory,
-      a.customer,
-      a.timestamp,
-    ].map((v) =>
-      `"${String(v ?? "").replace(/"/g, '""')}"`
-    );
+    audit.items.forEach(i => {
+      const inv = inventoryMap[i.itemId] || {};
 
-    lines.push(cells.join(","));
+      rows.push([
+        binId,
+        audit.auditor,
+        totalItems,
+        formatEST(audit.startTime),
+        i.itemId,
+        i.expectedBin || "",
+        i.scannedBin || "",
+        inv["received at warehouse"] || "",
+        inv["status"] || "",
+        i.status,
+        i.resolved ? "Yes" : "No",
+        formatEST(i.ts),
+        inv["order id"] || "",
+        inv["category"] || "",
+        inv["subcategory"] || "",
+        inv["customer"] || ""
+      ]);
+    });
   }
 
-  const csvText = lines.join("\n");
+  // Turn rows into CSV text
+  const csvContent = rows
+    .map(r =>
+      r.map(v => {
+        const s = (v ?? "").toString();
+        return s.includes(",") ? `"${s.replace(/"/g, '""')}"` : s;
+      }).join(",")
+    )
+    .join("\n");
 
-  res.setHeader("Content-Type", "text/csv");
-  res.setHeader(
-    "Content-Disposition",
-    `attachment; filename="shappi_full_audit_${Date.now()}.csv"`
-  );
-  res.send(csvText);
+  res.header("Content-Type", "text/csv");
+  res.attachment(`shappi_full_audit_${Date.now()}.csv`);
+  res.send(csvContent);
 });
 
-// Fallback: serve index.html for any unknown route
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "public", "index.html"));
-});
-
-// -------------------------------------------------------------
-// Start server
-// -------------------------------------------------------------
-const PORT = process.env.PORT || 10000;
-server.listen(PORT, () => {
-  console.log(`Shappi Inventory Backend running on ${PORT}`);
-});
+// --------------------------------------------------
+// START SERVER
+// --------------------------------------------------
+io.on("connection", () => {});
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
 
