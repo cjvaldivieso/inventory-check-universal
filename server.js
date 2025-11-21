@@ -1,433 +1,281 @@
-// server.js – Shappi Inventory App (stable CSV version)
+// server.js — Shappi Inventory Backend (stable CSV + scan + exports)
 
 import express from "express";
 import http from "http";
-import { Server as SocketIOServer } from "socket.io";
-import multer from "multer";
-import fs from "fs";
 import path from "path";
+import fs from "fs";
+import multer from "multer";
 import csv from "csv-parser";
-import moment from "moment-timezone";
+import { fileURLToPath } from "url";
 
-const __dirname = process.cwd();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const app = express();
 const server = http.createServer(app);
-const io = new SocketIOServer(server);
 
-const PORT = process.env.PORT || 10000;
-const TZ = "America/New_York";
-
-// -----------------------------
-// Paths & basic setup
-// -----------------------------
+// -------------------------------------------------------------
+// Directories
+// -------------------------------------------------------------
 const DATA_DIR = path.join(__dirname, "data");
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+const UPLOADS_DIR = path.join(__dirname, "uploads");
+const CANONICAL_CSV = path.join(DATA_DIR, "latest.csv");
+const META_PATH = path.join(DATA_DIR, "csv-meta.json");
 
-const CSV_PATH = path.join(DATA_DIR, "items.csv");
-const CSV_META_PATH = path.join(DATA_DIR, "csv-meta.json");
-const AUDIT_PATH = path.join(DATA_DIR, "audit-log.json");
+fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
+// Multer for CSV uploads
+const upload = multer({ dest: UPLOADS_DIR });
+
+// JSON body parser for scan routes
 app.use(express.json());
-app.use(express.static("public"));
 
-// in-memory data
-let csvRows = [];
-let binSet = new Set();                  // all bin IDs found in CSV
-let itemIndex = new Map();               // itemId -> row
-let auditSessions = {};                  // binId -> { auditor, startTime, scans[] }
+// Static frontend
+app.use(express.static(path.join(__dirname, "public")));
+
+// -------------------------------------------------------------
+// In-memory state
+// -------------------------------------------------------------
+let items = [];                // raw CSV rows
+let itemsById = new Map();     // normalized Item ID -> row
+let binsSet = new Set();       // normalized Bin ID
+let audits = [];               // list of scan results
 let csvMeta = { total: 0, uploadedAt: null };
 
-// -----------------------------
-// Helpers
-// -----------------------------
-function loadCsvFromDisk() {
-  csvRows = [];
-  binSet = new Set();
-  itemIndex = new Map();
+// Normalizers (match CSV + scanner input safely)
+const normalizeId = (v) => String(v ?? "").trim();
+const normalizeBin = (v) => String(v ?? "").trim().toUpperCase();
 
-  if (!fs.existsSync(CSV_PATH)) {
-    csvMeta = { total: 0, uploadedAt: null };
-    return;
+// -------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------
+function rebuildIndexes(rows) {
+  items = rows;
+  itemsById = new Map();
+  binsSet = new Set();
+  audits = []; // reset audits when a new CSV is uploaded
+
+  for (const row of rows) {
+    const itemId = normalizeId(row["Item ID"]);
+    const binId = normalizeBin(row["Warehouse Bin ID"]);
+
+    if (itemId) itemsById.set(itemId, row);
+    if (binId) binsSet.add(binId);
   }
 
+  csvMeta.total = items.length;
+}
+
+function loadCsvFile(filePath) {
   return new Promise((resolve, reject) => {
-    fs.createReadStream(CSV_PATH)
+    const rows = [];
+    fs.createReadStream(filePath)
       .pipe(csv())
-      .on("data", (row) => {
-        csvRows.push(row);
-        const binId = (row["Warehouse Bin ID"] || "").trim().toUpperCase();
-        const itemId = (row["Item ID"] || "").trim();
-        if (binId) binSet.add(binId);
-        if (itemId) itemIndex.set(itemId, row);
-      })
-      .on("end", () => {
-        if (fs.existsSync(CSV_META_PATH)) {
-          try {
-            csvMeta = JSON.parse(fs.readFileSync(CSV_META_PATH, "utf8"));
-          } catch {
-            csvMeta = {
-              total: csvRows.length,
-              uploadedAt: moment().tz(TZ).format("YYYY-MM-DD HH:mm"),
-            };
-          }
-        } else {
-          csvMeta = {
-            total: csvRows.length,
-            uploadedAt: moment().tz(TZ).format("YYYY-MM-DD HH:mm"),
-          };
-        }
-        console.log(`Loaded CSV with ${csvRows.length} rows`);
-        resolve();
-      })
-      .on("error", (err) => reject(err));
+      .on("data", (row) => rows.push(row))
+      .on("end", () => resolve(rows))
+      .on("error", reject);
   });
 }
 
-function saveAuditToDisk() {
-  fs.writeFileSync(AUDIT_PATH, JSON.stringify(auditSessions, null, 2));
-}
-
-function loadAuditFromDisk() {
-  if (!fs.existsSync(AUDIT_PATH)) return;
+async function initFromDisk() {
   try {
-    auditSessions = JSON.parse(fs.readFileSync(AUDIT_PATH, "utf8"));
-  } catch {
-    auditSessions = {};
-  }
-}
-
-// EST formatted time
-function fmtEST(dateLike) {
-  return moment(dateLike).tz(TZ).format("YYYY-MM-DD HH:mm");
-}
-
-// -----------------------------
-// Initial load
-// -----------------------------
-await loadCsvFromDisk();
-loadAuditFromDisk();
-
-// -----------------------------
-// Multer for CSV upload
-// -----------------------------
-const upload = multer({
-  dest: DATA_DIR,
-  limits: { fileSize: 10 * 1024 * 1024 },
-});
-
-// Upload CSV
-app.post("/upload-csv", upload.single("file"), async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
+    if (fs.existsSync(CANONICAL_CSV)) {
+      const rows = await loadCsvFile(CANONICAL_CSV);
+      rebuildIndexes(rows);
     }
 
-    // Move uploaded file to fixed path
-    fs.renameSync(req.file.path, CSV_PATH);
-
-    // Reload CSV into memory
-    await loadCsvFromDisk();
-
-    const uploadedAt = moment().tz(TZ).format("YYYY-MM-DD HH:mm");
-    csvMeta = {
-      total: csvRows.length,
-      uploadedAt,
-    };
-    fs.writeFileSync(CSV_META_PATH, JSON.stringify(csvMeta, null, 2));
-
-    // Notify all clients
-    io.emit("csvUpdated", csvMeta);
-
-    // Reset audits (optional – safer to avoid mixing CSV versions)
-    auditSessions = {};
-    saveAuditToDisk();
-
-    res.json(csvMeta);
+    if (fs.existsSync(META_PATH)) {
+      const metaRaw = fs.readFileSync(META_PATH, "utf8");
+      csvMeta = { ...csvMeta, ...JSON.parse(metaRaw) };
+    }
   } catch (err) {
-    console.error("upload-csv error", err);
-    res.status(500).json({ error: "Failed to upload CSV" });
+    console.error("Failed to init from disk:", err);
   }
-});
+}
 
-// Current CSV status
+initFromDisk();
+
+// -------------------------------------------------------------
+// Routes
+// -------------------------------------------------------------
+
+// CSV status (for showing "CSV Loaded" + timestamp)
 app.get("/csv-status", (req, res) => {
   res.json(csvMeta);
 });
 
-// -----------------------------
-// Audit endpoints
-// -----------------------------
-
-// Start / update a bin audit
-app.post("/audit/start/:binId", (req, res) => {
-  if (!csvRows.length) {
-    return res.status(400).json({ error: "no-csv" });
+// Upload CSV
+app.post("/upload-csv", upload.single("file"), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ ok: false, error: "no-file" });
   }
 
-  let binId = (req.params.binId || "").trim().toUpperCase();
-  const auditor = (req.query.auditor || "Unknown").trim() || "Unknown";
+  try {
+    const rows = await loadCsvFile(req.file.path);
+    rebuildIndexes(rows);
 
-  if (!/^[A-Z]{3}$/.test(binId)) {
-    return res.status(400).json({ error: "bad-format" });
+    // Save canonical copy + metadata so restarts still know the latest CSV
+    fs.copyFileSync(req.file.path, CANONICAL_CSV);
+    csvMeta.uploadedAt = new Date().toISOString();
+    fs.writeFileSync(META_PATH, JSON.stringify(csvMeta, null, 2));
+
+    res.json({
+      ok: true,
+      total: csvMeta.total,
+      uploadedAt: csvMeta.uploadedAt,
+    });
+  } catch (err) {
+    console.error("CSV upload parse error:", err);
+    res.status(500).json({ ok: false, error: "parse-failed" });
   }
-
-  if (!binSet.has(binId)) {
-    return res.status(400).json({ error: "no-bin" });
-  }
-
-  const now = new Date().toISOString();
-
-  if (!auditSessions[binId]) {
-    auditSessions[binId] = {
-      auditor,
-      startTime: now,
-      scans: [],
-    };
-  } else {
-    // If auditor changed, keep the first one, but we could update if you prefer.
-    if (!auditSessions[binId].startTime) {
-      auditSessions[binId].startTime = now;
-    }
-  }
-
-  saveAuditToDisk();
-  res.json({ ok: true });
 });
 
-// Scan an item
-app.post("/audit/scan", (req, res) => {
-  const { binId, itemId } = req.body || {};
-  const cleanBinId = (binId || "").trim().toUpperCase();
-  const cleanItemId = (itemId || "").trim();
+// Scan Bin — validate that the bin exists in the CSV
+app.post("/scan-bin", (req, res) => {
+  const rawBin = req.body?.binId;
+  const binId = normalizeBin(rawBin);
 
-  if (!csvRows.length) {
-    return res.status(400).json({ error: "no-csv" });
+  if (!binId) {
+    return res.status(400).json({ ok: false, error: "missing-bin" });
   }
 
-  if (!cleanBinId || !cleanItemId) {
-    return res.status(400).json({ error: "missing-fields" });
+  if (!csvMeta.total || binsSet.size === 0) {
+    return res.json({ ok: false, error: "no-csv" });
   }
 
-  const row = itemIndex.get(cleanItemId);
-  const nowIso = new Date().toISOString();
+  if (!binsSet.has(binId)) {
+    return res.json({ ok: false, error: "invalid-bin", binId });
+  }
 
-  let status = "no-bin";
-  let auditStatus = "no-bin";
-  let expectedBin = null;
-  let record = {};
+  res.json({ ok: true, binId });
+});
 
-  if (row) {
-    expectedBin = (row["Warehouse Bin ID"] || "").trim().toUpperCase();
-    const shappiStatus = (row["status"] || "").trim();
-    const category = row["category"] || "";
-    const subcategory = row["Subcategory"] || "";
-    const orderId = row["Order ID"] || "";
-    const customer = row["customer"] || "";
-    const whReceived = row["Received at Warehouse"] || "";
+// Scan Item — compare against CSV and record audit entry
+app.post("/scan-item", (req, res) => {
+  const binId = normalizeBin(req.body?.binId);
+  const itemId = normalizeId(req.body?.itemId);
 
-    // Decide audit status
-    const sLower = shappiStatus.toLowerCase();
+  if (!binId || !itemId) {
+    return res.status(400).json({ ok: false, error: "missing-fields" });
+  }
 
-    if (
-      sLower.includes("abandon") ||
-      sLower.includes("cancel") ||
-      sLower.includes("closed")
-    ) {
-      status = "remove-item";
-      auditStatus = "remove-item";
-    } else if (expectedBin && expectedBin === cleanBinId) {
-      status = "match";
+  if (!csvMeta.total || binsSet.size === 0) {
+    return res.json({ ok: false, error: "no-csv" });
+  }
+
+  const row = itemsById.get(itemId);
+  let auditStatus = "";
+  let expectedBin = "";
+  let whReceived = "";
+  let shappiStatus = "";
+  let category = "";
+  let subcategory = "";
+  let customer = "";
+
+  if (!row) {
+    auditStatus = "not-in-csv";
+  } else {
+    expectedBin = normalizeBin(row["Warehouse Bin ID"]);
+    whReceived = row["Received at Warehouse"] || "";
+    shappiStatus = row["status"] || "";
+    category = row["category"] || "";
+    subcategory = row["Subcategory"] || "";
+    customer = row["customer"] || "";
+
+    if (!expectedBin) {
+      auditStatus = "no-bin";
+    } else if (expectedBin === binId) {
       auditStatus = "match";
     } else {
-      status = "mismatch";
       auditStatus = "mismatch";
     }
-
-    record = {
-      expectedBin,
-      received: whReceived,
-      statusText: shappiStatus,
-      category,
-      subcategory,
-      orderId,
-      customer,
-    };
   }
 
-  // Save into audits
-  if (!auditSessions[cleanBinId]) {
-    auditSessions[cleanBinId] = {
-      auditor: "Unknown",
-      startTime: nowIso,
-      scans: [],
-    };
-  }
-
-  const session = auditSessions[cleanBinId];
-
-  // One row per item per bin: update if exists
-  const existing = session.scans.find((s) => s.itemId === cleanItemId);
-  const scanRec = {
-    itemId: cleanItemId,
-    expectedBin: expectedBin || null,
-    scannedBin: cleanBinId,
-    whReceived: record.received || null,
-    shappiStatus: record.statusText || null,
+  const auditRecord = {
+    binId,
+    itemId,
+    expectedBin,
+    scannedBin: binId,
+    whReceived,
+    shappiStatus,
+    category,
+    subcategory,
+    customer,
     auditStatus,
-    resolved: false,
-    scanTime: nowIso,
-    orderId: record.orderId || null,
-    category: record.category || null,
-    subcategory: record.subcategory || null,
-    customer: record.customer || null,
+    timestamp: new Date().toISOString(),
   };
 
-  if (existing) {
-    Object.assign(existing, scanRec);
-  } else {
-    session.scans.push(scanRec);
-  }
-
-  saveAuditToDisk();
+  audits.push(auditRecord);
 
   res.json({
-    status,
-    record,
+    ok: true,
+    status: auditStatus,
+    audit: auditRecord,
   });
 });
 
-// Mark resolved (checkbox in UI)
-app.post("/audit/resolve", (req, res) => {
-  const { binId, itemId, resolved } = req.body || {};
-  const cleanBinId = (binId || "").trim().toUpperCase();
-  const cleanItemId = (itemId || "").trim();
-
-  if (!auditSessions[cleanBinId]) return res.json({ ok: false });
-
-  const session = auditSessions[cleanBinId];
-  const rec = session.scans.find((s) => s.itemId === cleanItemId);
-  if (rec) {
-    rec.resolved = !!resolved;
-    saveAuditToDisk();
-  }
-
-  res.json({ ok: true });
-});
-
-// -----------------------------
-// Export full audit CSV
-// -----------------------------
+// Export full audit as CSV
 app.get("/export-full-audit", (req, res) => {
-  if (!Object.keys(auditSessions).length) {
-    return res.status(400).send("No audit data");
+  if (!audits.length) {
+    return res.status(400).send("No audit data yet.");
   }
 
-  // Build summary per bin
-  const binStats = {};
-  for (const [binId, session] of Object.entries(auditSessions)) {
-    const expectedTotal = csvRows.filter(
-      (r) => (r["Warehouse Bin ID"] || "").trim().toUpperCase() === binId
-    ).length;
+  const header = [
+    "Bin ID",
+    "Item ID",
+    "Expected Bin",
+    "Scanned Bin",
+    "WH Received",
+    "Shappi Status",
+    "Audit Status",
+    "Category",
+    "Subcategory",
+    "Customer",
+    "Scan Timestamp",
+  ];
 
-    const uniqueItems = new Set(session.scans.map((s) => s.itemId));
-    const matched = session.scans.filter((s) => s.auditStatus === "match")
-      .length;
-    const scanned = uniqueItems.size;
-    const missing = Math.max(expectedTotal - matched, 0);
+  const lines = [header.join(",")];
 
-    binStats[binId] = { expectedTotal, scanned, matched, missing };
-  }
-
-  let lines = [];
-
-  // Summary header
-  lines.push("Bin ID,Expected Items,Scanned (unique),Matched,Missing");
-
-  for (const [binId, stats] of Object.entries(binStats)) {
-    lines.push(
-      `${binId},${stats.expectedTotal},${stats.scanned},${stats.matched},${stats.missing}`
+  for (const a of audits) {
+    const cells = [
+      a.binId,
+      a.itemId,
+      a.expectedBin,
+      a.scannedBin,
+      a.whReceived,
+      a.shappiStatus,
+      a.auditStatus,
+      a.category,
+      a.subcategory,
+      a.customer,
+      a.timestamp,
+    ].map((v) =>
+      `"${String(v ?? "").replace(/"/g, '""')}"`
     );
+
+    lines.push(cells.join(","));
   }
 
-  // Blank line
-  lines.push("");
-  // Detail header (includes extra columns)
-  lines.push(
-    [
-      "Bin ID",
-      "Auditor",
-      "# Items in Session",
-      "Start Time (EST)",
-      "Item ID",
-      "Expected Bin",
-      "Scanned Bin",
-      "WH Received",
-      "Shappi Status",
-      "Audit Status",
-      "Resolved",
-      "Scan Timestamp (EST)",
-      "Order ID",
-      "Category",
-      "Subcategory",
-      "Customer",
-    ].join(",")
-  );
+  const csvText = lines.join("\n");
 
-  // Detail rows
-  for (const [binId, session] of Object.entries(auditSessions)) {
-    const count = session.scans.length;
-    const startTime = session.startTime
-      ? fmtEST(session.startTime)
-      : fmtEST(new Date().toISOString());
-
-    for (const s of session.scans) {
-      const scanTs = fmtEST(s.scanTime);
-      lines.push(
-        [
-          binId,
-          session.auditor || "Unknown",
-          count,
-          startTime,
-          s.itemId,
-          s.expectedBin || "",
-          s.scannedBin || "",
-          (s.whReceived || "").replace(/,/g, " "),
-          (s.shappiStatus || "").replace(/,/g, " "),
-          s.auditStatus || "",
-          s.resolved ? "Yes" : "No",
-          scanTs,
-          s.orderId || "",
-          (s.category || "").replace(/,/g, " "),
-          (s.subcategory || "").replace(/,/g, " "),
-          (s.customer || "").replace(/,/g, " "),
-        ].join(",")
-      );
-    }
-  }
-
-  const csvContent = lines.join("\n");
   res.setHeader("Content-Type", "text/csv");
   res.setHeader(
     "Content-Disposition",
     `attachment; filename="shappi_full_audit_${Date.now()}.csv"`
   );
-  res.send(csvContent);
+  res.send(csvText);
 });
 
-// -----------------------------
-// Socket.io basic connection
-// -----------------------------
-io.on("connection", (socket) => {
-  console.log("Client connected");
-  if (csvMeta.total) {
-    socket.emit("csvUpdated", csvMeta);
-  }
+// Fallback: serve index.html for any unknown route
+app.get("*", (req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// -----------------------------
+// -------------------------------------------------------------
 // Start server
-// -----------------------------
+// -------------------------------------------------------------
+const PORT = process.env.PORT || 10000;
 server.listen(PORT, () => {
   console.log(`Shappi Inventory Backend running on ${PORT}`);
 });
