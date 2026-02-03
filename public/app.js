@@ -386,7 +386,8 @@ async function handleItemScan(itemId) {
       toast(`Move ${itemId} → ${data.correctBin}`, "warn");
     } else if (data.status === "remove-item") {
       label = "Remove"; cls = "red";
-      toast(`❌ Remove ${itemId}`, "error");
+      // black X (replace the red ❌)
+      toast(`✖ Remove ${itemId}`, "error");
     } else if (data.status === "no-bin") {
       label = "No CSV"; cls = "red";
       toast(`${itemId} not in CSV`, "error");
@@ -501,8 +502,18 @@ function flashOK() {
 // --------------------------------------------------
 // TOAST
 // --------------------------------------------------
+
+// Single global timer so rapid scans don't cancel new toasts early
+let toastTimer = null;
+
 function toast(msg, type = "info") {
   const t = document.getElementById("toast");
+
+  if (toastTimer) {
+    clearTimeout(toastTimer);
+    toastTimer = null;
+  }
+
   t.textContent = msg;
   t.style.display = "block";
 
@@ -511,6 +522,6 @@ function toast(msg, type = "info") {
     type === "warn"    ? "#ffc107" :
     type === "error"   ? "#dc3545" : "#6c47ff";
 
-  setTimeout(() => { t.style.display = "none"; }, 5000);
+  toastTimer = setTimeout(() => { t.style.display = "none"; }, 5000);
 }
 
