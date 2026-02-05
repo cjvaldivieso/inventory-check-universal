@@ -1,9 +1,18 @@
-/* public/app.js — Shappi Inventory App (v18 + Battery Saver + Scan Pulse + Scanner Frame + Scan Badge)
-   Fixes:
-   ✓ Keeps action toasts (Correct / Move / Remove / Not in CSV)
-   ✓ Avoids overlap/confusion: toast moves to TOP while scanner is open
-   ✓ Badge shows scanned value (bin/item) above Stop
-   ✓ Battery saver: throttled decode + downscaled frames + lower camera FPS
+/* public/app.js — Shappi Inventory App (v18 FIXED + Battery Saver + Scanner Frame + Pulse + Action Badge)
+   Contains:
+   ✓ Chrome desktop CSV upload fix
+   ✓ Working bin & item QR scanner
+   ✓ Auto-start item scanning after bin scan
+   ✓ "Scan Item QR" fallback mode
+   ✓ Bin format validation (AAA only)
+   ✓ Bin must exist in CSV (server validation)
+   ✓ Strong debounce to prevent duplicate reads
+   ✓ Updated table columns (Item, Bin, WH Received, Status, Audit, Resolved)
+   ✓ “Export Table” / “Export Full Audit”
+   + Battery saver: throttled decode + downscaled frames + lower camera FPS
+   + Scanner frame: purple corner brackets while scanner is running
+   + Visual scan feedback: center ✓ pulse (detectable)
+   + UI FIX: single Action Badge above Stop (no overlap, no contradictions)
 */
 
 const socket = io();
@@ -12,22 +21,24 @@ const socket = io();
 // CSV META
 // --------------------------------------------------
 let latestCSVTotal = 0;
-let latestCSVTime  = null;
+let latestCSVTime = null;
 
-const csvInfo      = document.getElementById("csvInfo");
+const csvInfo = document.getElementById("csvInfo");
 const csvTimestamp = document.getElementById("csvTimestamp");
-const csvUpload    = document.getElementById("csvUpload");
+const csvUpload = document.getElementById("csvUpload");
 
+// Broadcast CSV changes
 socket.on("csvUpdated", (meta) => {
   latestCSVTotal = meta.total;
-  latestCSVTime  = meta.uploadedAt;
+  latestCSVTime = meta.uploadedAt;
 
-  if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${meta.total})`;
+  if (csvInfo) csvInfo.textContent = `📦 CSV Loaded (${meta.total})`;
   if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${meta.uploadedAt}`;
 
   toast(`CSV updated • ${meta.total} items`, "info");
 });
 
+// Initial CSV status (for ALL users)
 (async () => {
   try {
     const r = await fetch("/csv-status");
@@ -35,9 +46,9 @@ socket.on("csvUpdated", (meta) => {
 
     if (typeof d.total !== "undefined") {
       latestCSVTotal = d.total;
-      latestCSVTime  = d.uploadedAt;
+      latestCSVTime = d.uploadedAt;
 
-      if (csvInfo)      csvInfo.textContent      = `📦 CSV Loaded (${d.total})`;
+      if (csvInfo) csvInfo.textContent = `📦 CSV Loaded (${d.total})`;
       if (csvTimestamp) csvTimestamp.textContent = `Last Updated: ${d.uploadedAt || "(none)"}`;
     }
   } catch (err) {
@@ -49,6 +60,7 @@ socket.on("csvUpdated", (meta) => {
 // CSV UPLOAD
 // --------------------------------------------------
 if (csvUpload) {
+  // allow selecting same file twice
   csvUpload.addEventListener("click", (e) => {
     e.stopPropagation();
     e.target.value = "";
@@ -62,13 +74,13 @@ if (csvUpload) {
     fd.append("file", file);
 
     try {
-      const res  = await fetch("/upload-csv", { method: "POST", body: fd });
+      const res = await fetch("/upload-csv", { method: "POST", body: fd });
       const data = await res.json();
 
       latestCSVTotal = data.total;
-      latestCSVTime  = data.uploadedAt;
+      latestCSVTime = data.uploadedAt;
 
-      csvInfo.textContent      = `📦 CSV Loaded (${data.total})`;
+      csvInfo.textContent = `📦 CSV Loaded (${data.total})`;
       csvTimestamp.textContent = `Last Updated: ${data.uploadedAt}`;
 
       toast(`CSV uploaded • ${data.total} items`, "success");
@@ -82,15 +94,15 @@ if (csvUpload) {
 // --------------------------------------------------
 // AUDITOR SELECTOR
 // --------------------------------------------------
-const auditorSelect  = document.getElementById("auditorSelect");
+const auditorSelect = document.getElementById("auditorSelect");
 const auditorDisplay = document.getElementById("currentAuditor");
 
 function setAuditor(name) {
   localStorage.setItem("auditorName", name);
-  if (auditorDisplay) auditorDisplay.textContent = name;
+  auditorDisplay.textContent = name;
 }
 
-(function initAuditor(){
+(function initAuditor() {
   if (!auditorSelect) return;
   const saved = localStorage.getItem("auditorName");
   if (saved) {
@@ -122,27 +134,28 @@ auditorSelect?.addEventListener("change", () => {
 // --------------------------------------------------
 // DOM REFS & STATE
 // --------------------------------------------------
-const currentBinEl      = document.getElementById("currentBin");
-const logTbody          = document.getElementById("logTbody");
-const scanBinBtn        = document.getElementById("scanBinBtn");
-const scanItemBtn       = document.getElementById("scanItemBtn");
-const exportVisibleBtn  = document.getElementById("exportVisible");
-const fullExportBtn     = document.getElementById("downloadAuditCsv");
+const currentBinEl = document.getElementById("currentBin");
+const logTbody = document.getElementById("logTbody");
+const scanBinBtn = document.getElementById("scanBinBtn");
+const scanItemBtn = document.getElementById("scanItemBtn");
+const exportVisibleBtn = document.getElementById("exportVisible");
+const fullExportBtn = document.getElementById("downloadAuditCsv");
 
-let currentBin   = null;
-let scanning     = false;
+let currentBin = null;
+let scanning = false;
 let activeStream = null;
 
+// debounce for items ONLY
 let lastScan = 0;
 const SCAN_COOLDOWN = 900;
 
-// Battery saver
+// Battery saver settings (works on iPhone + Android)
 const DECODE_INTERVAL_MS = 200; // 5 decodes/sec
-const DECODE_MAX_WIDTH   = 640; // downscale before jsQR
-const CAMERA_FPS_IDEAL   = 15;  // lower FPS = less power
+const DECODE_MAX_WIDTH = 640;   // downscale image before jsQR
+const CAMERA_FPS_IDEAL = 15;    // lower FPS = less power
 
 // --------------------------------------------------
-// CAMERA OVERLAY
+// CAMERA OVERLAY UI
 // --------------------------------------------------
 function createOverlay(titleText) {
   const overlay = document.createElement("div");
@@ -152,15 +165,16 @@ function createOverlay(titleText) {
     background: rgba(0,0,0,0.92);
     display: flex; flex-direction: column;
     align-items: center;
-    padding-top: 40px;
+    padding-top: 28px;
     z-index: 9999;
   `;
 
   const title = document.createElement("div");
   title.textContent = titleText;
   title.style = `
-    color:#fff; font-weight:700; font-size:20px;
-    margin-bottom:14px;
+    color:#fff; font-weight:800; font-size:26px;
+    margin: 10px 0 14px;
+    text-align:center;
   `;
   overlay.appendChild(title);
 
@@ -170,106 +184,126 @@ function createOverlay(titleText) {
   video.autoplay = true;
   video.style = `
     width:92vw; max-width:650px;
-    border-radius:14px;
+    border-radius:22px;
+    background:#000;
   `;
   overlay.appendChild(video);
 
   // Scanner frame (purple corner brackets)
   const frame = document.createElement("div");
   frame.style = `
-    position: absolute;
-    width: 72vw;
-    max-width: 520px;
+    position: fixed;
+    width: 78vw;
+    max-width: 560px;
     aspect-ratio: 1 / 1;
-    top: 50%;
+    top: 56%;
     left: 50%;
-    transform: translate(-50%, -35%);
+    transform: translate(-50%, -45%);
     pointer-events: none;
-    z-index: 9999;
+    z-index: 10000;
   `;
 
   const cornerBase = `
     position:absolute;
-    width:38px; height:38px;
+    width:44px; height:44px;
     border-color:#6c47ff;
     border-style:solid;
     border-width:0;
   `;
 
   const tl = document.createElement("div");
-  tl.style = cornerBase + `top:0; left:0; border-top-width:6px; border-left-width:6px; border-radius:10px 0 0 0;`;
-  const tr = document.createElement("div");
-  tr.style = cornerBase + `top:0; right:0; border-top-width:6px; border-right-width:6px; border-radius:0 10px 0 0;`;
-  const bl = document.createElement("div");
-  bl.style = cornerBase + `bottom:0; left:0; border-bottom-width:6px; border-left-width:6px; border-radius:0 0 0 10px;`;
-  const br = document.createElement("div");
-  br.style = cornerBase + `bottom:0; right:0; border-bottom-width:6px; border-right-width:6px; border-radius:0 0 10px 0;`;
+  tl.style = cornerBase + `top:0; left:0; border-top-width:7px; border-left-width:7px; border-radius:12px 0 0 0;`;
 
-  frame.appendChild(tl); frame.appendChild(tr); frame.appendChild(bl); frame.appendChild(br);
+  const tr = document.createElement("div");
+  tr.style = cornerBase + `top:0; right:0; border-top-width:7px; border-right-width:7px; border-radius:0 12px 0 0;`;
+
+  const bl = document.createElement("div");
+  bl.style = cornerBase + `bottom:0; left:0; border-bottom-width:7px; border-left-width:7px; border-radius:0 0 0 12px;`;
+
+  const br = document.createElement("div");
+  br.style = cornerBase + `bottom:0; right:0; border-bottom-width:7px; border-right-width:7px; border-radius:0 0 12px 0;`;
+
+  frame.appendChild(tl);
+  frame.appendChild(tr);
+  frame.appendChild(bl);
+  frame.appendChild(br);
   overlay.appendChild(frame);
 
-  // Center pulse ✓
+  // Center pulse ✓ (quick, but visible)
   const pulse = document.createElement("div");
   pulse.textContent = "✓";
   pulse.style = `
     position: fixed;
     top: 50%; left: 50%;
-    transform: translate(-50%, -50%) scale(0.95);
-    width: 120px; height: 120px;
+    transform: translate(-50%, -50%) scale(0.85);
+    width: 140px; height: 140px;
     border-radius: 999px;
     background: rgba(0,0,0,0.55);
-    border: 3px solid #28a745;
+    border: 4px solid #28a745;
     color: #28a745;
-    font-size: 76px;
-    font-weight: 800;
+    font-size: 84px;
+    font-weight: 900;
     display: none;
     align-items: center;
     justify-content: center;
-    z-index: 10000;
+    z-index: 11000;
     opacity: 1;
   `;
   overlay.appendChild(pulse);
 
-  // Badge above Stop (shows scanned value)
-  const badge = document.createElement("div");
-  badge.style = `
+  // Action badge (ONLY per-scan message) — above Stop
+  const action = document.createElement("div");
+  action.style = `
     position: fixed;
-    bottom: 110px;
+    bottom: 120px; /* ABOVE Stop */
     left: 50%;
     transform: translateX(-50%);
-    background: rgba(40,167,69,0.95);
+    background: rgba(30,41,59,0.98);
+    border: 2px solid #6c47ff;
     color: #fff;
-    font-weight: 800;
+    font-weight: 900;
     font-size: 20px;
     padding: 12px 18px;
     border-radius: 16px;
     display: none;
-    min-width: 220px;
+    min-width: 260px;
+    max-width: 92vw;
     text-align: center;
-    z-index: 10000;
-    box-shadow: 0 10px 24px rgba(0,0,0,0.35);
+    z-index: 11000;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.45);
   `;
-  overlay.appendChild(badge);
+  overlay.appendChild(action);
 
+  // Stop button fixed at bottom
   const stopBtn = document.createElement("button");
   stopBtn.textContent = "🛑 Stop";
   stopBtn.style = `
-    margin-top:18px; background:#ff5555;
-    border:none;color:#fff;font-size:18px;
-    padding:12px 22px;border-radius:12px;
-    font-weight:600;
-    z-index: 10001;
+    position: fixed;
+    bottom: 36px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 78vw;
+    max-width: 420px;
+    background:#ff5555;
+    border:none;
+    color:#fff;
+    font-size:22px;
+    padding:16px 22px;
+    border-radius:18px;
+    font-weight:800;
+    z-index: 12000;
+    box-shadow: 0 10px 26px rgba(0,0,0,0.45);
   `;
   overlay.appendChild(stopBtn);
 
   document.body.appendChild(overlay);
-  return { overlay, video, stopBtn, pulse, badge };
+  return { overlay, video, stopBtn, pulse, action };
 }
 
 function stopScanner() {
-  try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch(e){}
+  try { activeStream?.getTracks()?.forEach(t => t.stop()); } catch (e) {}
   activeStream = null;
-  scanning     = false;
+  scanning = false;
   document.querySelectorAll(".shappi-scan-overlay")?.forEach(o => o.remove());
 }
 
@@ -277,30 +311,57 @@ function showScanPulse(pulseEl) {
   if (!pulseEl) return;
   pulseEl.style.display = "flex";
   pulseEl.style.opacity = "1";
-  setTimeout(() => { pulseEl.style.display = "none"; }, 650);
+  pulseEl.style.transform = "translate(-50%, -50%) scale(1.0)";
+
+  setTimeout(() => {
+    pulseEl.style.opacity = "0";
+    pulseEl.style.transform = "translate(-50%, -50%) scale(1.12)";
+  }, 260);
+
+  setTimeout(() => {
+    pulseEl.style.display = "none";
+    pulseEl.style.opacity = "1";
+    pulseEl.style.transform = "translate(-50%, -50%) scale(0.85)";
+  }, 520);
 }
 
-let badgeTimer1 = null;
-let badgeTimer2 = null;
+let actionTimer1 = null;
+let actionTimer2 = null;
 
-function showScanBadge(badgeEl, value) {
-  if (!badgeEl) return;
+function showAction(actionEl, message, mode = "info") {
+  if (!actionEl) return;
 
-  if (badgeTimer1) clearTimeout(badgeTimer1);
-  if (badgeTimer2) clearTimeout(badgeTimer2);
+  if (actionTimer1) clearTimeout(actionTimer1);
+  if (actionTimer2) clearTimeout(actionTimer2);
 
-  badgeEl.textContent = `✓ ${value}`;
-  badgeEl.style.display = "block";
-  badgeEl.style.opacity = "1";
+  // Color by mode (no contradictions)
+  const bg =
+    mode === "success" ? "rgba(40,167,69,0.95)" :
+    mode === "warn"    ? "rgba(255,193,7,0.95)" :
+    mode === "error"   ? "rgba(220,53,69,0.95)" :
+                         "rgba(30,41,59,0.98)";
 
-  badgeTimer1 = setTimeout(() => {
-    badgeEl.style.opacity = "0";
-  }, 900);
+  const border =
+    mode === "success" ? "#1f7a34" :
+    mode === "warn"    ? "#c89a00" :
+    mode === "error"   ? "#9b1c2c" :
+                         "#6c47ff";
 
-  badgeTimer2 = setTimeout(() => {
-    badgeEl.style.display = "none";
-    badgeEl.style.opacity = "1";
-  }, 1200);
+  actionEl.textContent = message;
+  actionEl.style.background = bg;
+  actionEl.style.borderColor = border;
+  actionEl.style.display = "block";
+  actionEl.style.opacity = "1";
+
+  // visible long enough to read
+  actionTimer1 = setTimeout(() => {
+    actionEl.style.opacity = "0";
+  }, 1400);
+
+  actionTimer2 = setTimeout(() => {
+    actionEl.style.display = "none";
+    actionEl.style.opacity = "1";
+  }, 1700);
 }
 
 async function getCameraStream() {
@@ -345,7 +406,7 @@ scanBinBtn.onclick = () => startBinScan();
 async function startBinScan() {
   stopScanner();
 
-  const { overlay, video, stopBtn, pulse, badge } = createOverlay("Scan Bin QR");
+  const { overlay, video, stopBtn, pulse, action } = createOverlay("Scan Bin QR");
   let stopped = false;
 
   stopBtn.onclick = () => { stopped = true; stopScanner(); };
@@ -356,7 +417,7 @@ async function startBinScan() {
     await video.play();
 
     const canvas = document.createElement("canvas");
-    const ctx    = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d");
     let lastDecode = 0;
 
     const loop = async () => {
@@ -372,31 +433,32 @@ async function startBinScan() {
             const code = jsQR(frame.data, frame.width, frame.height);
             if (code && code.data) {
               const bin = code.data.trim().toUpperCase();
-
               showScanPulse(pulse);
-              showScanBadge(badge, bin);
 
+              // Pattern check
               if (!isValidBin(bin)) {
-                toast("Invalid Bin — must be 3 letters (AAA)", "error");
+                showAction(action, `✖ Invalid Bin (must be AAA)`, "error");
                 requestAnimationFrame(loop);
                 return;
               }
 
+              // Existence check in CSV
               try {
-                const resp  = await fetch(`/validate-bin/${encodeURIComponent(bin)}`);
-                const info  = await resp.json();
+                const resp = await fetch(`/validate-bin/${encodeURIComponent(bin)}`);
+                const info = await resp.json();
                 if (!info.valid) {
-                  toast("Bin not found in CSV", "error");
+                  showAction(action, `✖ Bin ${bin} not found in CSV`, "error");
                   requestAnimationFrame(loop);
                   return;
                 }
               } catch (e) {
                 console.error("Bin validation failed", e);
-                toast("Unable to validate bin (check CSV)", "error");
+                showAction(action, `✖ Unable to validate bin`, "error");
                 requestAnimationFrame(loop);
                 return;
               }
 
+              // Bin is valid → start audit
               currentBin = bin;
               currentBinEl.textContent = bin;
 
@@ -404,7 +466,9 @@ async function startBinScan() {
               stopScanner();
 
               const auditor = localStorage.getItem("auditorName") || "Unknown";
-              await fetch(`/audit/start/${encodeURIComponent(bin)}?auditor=${encodeURIComponent(auditor)}`, { method: "POST" });
+              await fetch(`/audit/start/${encodeURIComponent(bin)}?auditor=${encodeURIComponent(auditor)}`, {
+                method: "POST"
+              });
 
               toast(`Bin ${bin} selected`, "success");
               startItemScan();
@@ -418,7 +482,6 @@ async function startBinScan() {
     };
 
     loop();
-
   } catch (err) {
     console.error("Camera error", err);
     toast("Camera unavailable", "error");
@@ -427,7 +490,7 @@ async function startBinScan() {
 }
 
 // --------------------------------------------------
-// ITEM SCAN
+// ITEM SCANNING
 // --------------------------------------------------
 scanItemBtn.onclick = () => startItemScan();
 
@@ -437,10 +500,14 @@ async function startItemScan() {
   stopScanner();
   scanning = true;
 
-  const { overlay, video, stopBtn, pulse, badge } = createOverlay(`Scanning Items • Bin ${currentBin}`);
+  const { overlay, video, stopBtn, pulse, action } = createOverlay(`Scanning Items • Bin ${currentBin}`);
   let stopped = false;
 
-  stopBtn.onclick = () => { stopped = true; stopScanner(); toast("Stopped", "info"); };
+  stopBtn.onclick = () => {
+    stopped = true;
+    stopScanner();
+    toast("Stopped", "info");
+  };
 
   try {
     activeStream = await getCameraStream();
@@ -448,7 +515,7 @@ async function startItemScan() {
     await video.play();
 
     const canvas = document.createElement("canvas");
-    const ctx    = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d");
     let lastDecode = 0;
 
     const loop = async () => {
@@ -467,12 +534,10 @@ async function startItemScan() {
               lastScan = now;
 
               const id = code.data.trim();
-
               showScanPulse(pulse);
-              showScanBadge(badge, id);
 
-              flashOK();
-              await handleItemScan(id);
+              // Immediate feedback will come from server result via handleItemScan()
+              await handleItemScan(id, action);
             }
           }
         }
@@ -482,7 +547,6 @@ async function startItemScan() {
     };
 
     loop();
-
   } catch (err) {
     console.error("Camera error", err);
     toast("Camera error", "error");
@@ -491,9 +555,9 @@ async function startItemScan() {
 }
 
 // --------------------------------------------------
-// HANDLE ITEM SCAN (RESTORES FULL STATUS TOASTS)
+// HANDLE ITEM SCAN → update table row + show ONE action message
 // --------------------------------------------------
-async function handleItemScan(itemId) {
+async function handleItemScan(itemId, actionEl) {
   const auditor = localStorage.getItem("auditorName") || "Unknown";
 
   try {
@@ -504,31 +568,32 @@ async function handleItemScan(itemId) {
     });
 
     const data = await res.json();
-    const rec  = data.record || {};
+    const rec = data.record || {};
 
     let label = "";
-    let cls   = "";
+    let cls = "";
 
-    // ✅ Keep the status toast (this is the key functionality)
+    // Only ONE per-scan message: Action Badge (no toast spam)
     if (data.status === "match") {
       label = "Correct"; cls = "green";
-      toast(`✓ Correct • ${itemId}`, "success");
+      showAction(actionEl, `✓ ${itemId} • Correct`, "success");
     } else if (data.status === "mismatch") {
       label = `Move → ${data.correctBin}`; cls = "yellow";
-      toast(`Move ${itemId} → ${data.correctBin}`, "warn");
+      showAction(actionEl, `Move ${itemId} → ${data.correctBin}`, "warn");
     } else if (data.status === "remove-item") {
       label = "Remove"; cls = "red";
-      toast(`✖ Remove ${itemId}`, "error");
+      // black X, as requested
+      showAction(actionEl, `✖ Remove ${itemId}`, "error");
     } else if (data.status === "no-bin") {
       label = "No CSV"; cls = "red";
-      toast(`${itemId} not in CSV`, "error");
+      showAction(actionEl, `${itemId} not in CSV`, "error");
     } else {
       label = data.status || "Unknown";
-      cls   = "grey";
-      toast(`${itemId}: ${label}`, "info");
+      cls = "grey";
+      showAction(actionEl, `${itemId} • ${label}`, "info");
     }
 
-    // Table row
+    // Update or insert table row
     let row = logTbody.querySelector(`tr[data-item="${itemId}"]`);
 
     const html = `
@@ -572,8 +637,8 @@ logTbody.addEventListener("change", async (e) => {
   const el = e.target;
   if (!el.classList.contains("resolveToggle")) return;
 
-  const binId   = el.getAttribute("data-bin");
-  const itemId  = el.getAttribute("data-item");
+  const binId = el.getAttribute("data-bin");
+  const itemId = el.getAttribute("data-item");
   const resolved = !!el.checked;
 
   try {
@@ -588,9 +653,9 @@ logTbody.addEventListener("change", async (e) => {
 });
 
 // --------------------------------------------------
-// EXPORT TABLE
+// EXPORT TABLE (VISIBLE COLUMNS ONLY)
 // --------------------------------------------------
-exportVisibleBtn?.addEventListener("click", () => {
+exportVisibleBtn.onclick = () => {
   let csv = "Item,Bin,WH Received,Status,Audit,Resolved\n";
 
   [...logTbody.children].forEach(row => {
@@ -599,35 +664,25 @@ exportVisibleBtn?.addEventListener("click", () => {
   });
 
   const blob = new Blob([csv], { type: "text/csv" });
-  const url  = URL.createObjectURL(blob);
+  const url = URL.createObjectURL(blob);
 
   const a = document.createElement("a");
   a.href = url;
   a.download = `shappi_table_${Date.now()}.csv`;
   a.click();
+
   URL.revokeObjectURL(url);
-});
+};
 
-fullExportBtn?.addEventListener("click", () => {
+// --------------------------------------------------
+// FULL AUDIT EXPORT
+// --------------------------------------------------
+fullExportBtn.onclick = () => {
   window.location.href = "/export-summary";
-});
+};
 
 // --------------------------------------------------
-// VISUAL FLASH
-// --------------------------------------------------
-function flashOK() {
-  const d = document.createElement("div");
-  d.style = `
-    position:fixed; inset:0;
-    background:rgba(40,167,69,0.25);
-    z-index:9998;
-  `;
-  document.body.appendChild(d);
-  setTimeout(() => d.remove(), 180);
-}
-
-// --------------------------------------------------
-// TOAST (NO OVERLAP DURING SCANNING)
+// TOAST (system events only)
 // --------------------------------------------------
 let toastTimer = null;
 
@@ -638,16 +693,6 @@ function toast(msg, type = "info") {
   if (toastTimer) {
     clearTimeout(toastTimer);
     toastTimer = null;
-  }
-
-  // ✅ If scanner overlay is open, pin toast to TOP so it never overlaps badge/Stop
-  const scanningUIOpen = !!document.querySelector(".shappi-scan-overlay");
-  if (scanningUIOpen) {
-    t.style.top = "24px";
-    t.style.bottom = "auto";
-  } else {
-    t.style.bottom = "24px";
-    t.style.top = "auto";
   }
 
   t.textContent = msg;
