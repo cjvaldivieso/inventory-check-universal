@@ -1,4 +1,4 @@
-/* public/app.js — Shappi Inventory App (v18 final, FIXED)
+/* public/app.js — Shappi Inventory App (v18 final, FIXED + Battery Saver + Scan Pulse)
    Contains:
    ✓ Chrome desktop CSV upload fix
    ✓ Working bin & item QR scanner
@@ -9,6 +9,8 @@
    ✓ Strong debounce to prevent duplicate reads
    ✓ Updated table columns (Item, Bin, WH Received, Status, Audit, Resolved)
    ✓ “Export Table” / “Export Full Audit”
+   + Battery saver: throttled decode + downscaled frames + lower camera FPS
+   + Visual scan feedback: center ✓ pulse when a QR is accepted
 */
 
 const socket = io();
@@ -145,6 +147,11 @@ let activeStream = null;
 let lastScan     = 0;
 const SCAN_COOLDOWN = 900;
 
+// Battery saver settings (works on iPhone + Android)
+const DECODE_INTERVAL_MS = 200; // 5 decodes/sec
+const DECODE_MAX_WIDTH   = 640; // downscale image before jsQR
+const CAMERA_FPS_IDEAL   = 15;  // lower FPS = less power
+
 // --------------------------------------------------
 // CAMERA OVERLAY
 // --------------------------------------------------
@@ -178,6 +185,29 @@ function createOverlay(titleText) {
   `;
   overlay.appendChild(video);
 
+  // Visual scan feedback (center pulse ✓)
+  const pulse = document.createElement("div");
+  pulse.className = "scan-pulse";
+  pulse.textContent = "✓";
+  pulse.style = `
+    position: fixed;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%) scale(0.9);
+    width: 120px; height: 120px;
+    border-radius: 999px;
+    background: rgba(0,0,0,0.55);
+    border: 3px solid #28a745;
+    color: #28a745;
+    font-size: 76px;
+    font-weight: 800;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    opacity: 1;
+  `;
+  overlay.appendChild(pulse);
+
   const stopBtn = document.createElement("button");
   stopBtn.textContent = "🛑 Stop";
   stopBtn.style = `
@@ -189,7 +219,7 @@ function createOverlay(titleText) {
   overlay.appendChild(stopBtn);
 
   document.body.appendChild(overlay);
-  return { overlay, video, stopBtn };
+  return { overlay, video, stopBtn, pulse };
 }
 
 function stopScanner() {
@@ -197,6 +227,52 @@ function stopScanner() {
   activeStream = null;
   scanning     = false;
   document.querySelectorAll(".shappi-scan-overlay")?.forEach(o => o.remove());
+}
+
+function showScanPulse(pulseEl) {
+  if (!pulseEl) return;
+  pulseEl.style.display = "flex";
+  pulseEl.style.opacity = "1";
+  pulseEl.style.transform = "translate(-50%, -50%) scale(1.0)";
+
+  setTimeout(() => {
+    pulseEl.style.opacity = "0";
+    pulseEl.style.transform = "translate(-50%, -50%) scale(1.12)";
+  }, 80);
+
+  setTimeout(() => {
+    pulseEl.style.display = "none";
+    pulseEl.style.opacity = "1";
+    pulseEl.style.transform = "translate(-50%, -50%) scale(0.9)";
+  }, 260);
+}
+
+async function getCameraStream() {
+  // Conservative constraints that work well cross-device
+  return navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: "environment",
+      frameRate: { ideal: CAMERA_FPS_IDEAL, max: 20 },
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    }
+  });
+}
+
+function drawDownscaledFrame(video, canvas, ctx) {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) return null;
+
+  const scale = Math.min(1, DECODE_MAX_WIDTH / vw);
+  const cw = Math.floor(vw * scale);
+  const ch = Math.floor(vh * scale);
+
+  canvas.width = cw;
+  canvas.height = ch;
+
+  ctx.drawImage(video, 0, 0, cw, ch);
+  return ctx.getImageData(0, 0, cw, ch);
 }
 
 // --------------------------------------------------
@@ -214,73 +290,79 @@ scanBinBtn.onclick = () => startBinScan();
 async function startBinScan() {
   stopScanner();
 
-  const { overlay, video, stopBtn } = createOverlay("Scan Bin QR");
+  const { overlay, video, stopBtn, pulse } = createOverlay("Scan Bin QR");
   let stopped = false;
 
   stopBtn.onclick = () => { stopped = true; stopScanner(); };
 
   try {
-    activeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" }
-    });
-
+    activeStream = await getCameraStream();
     video.srcObject = activeStream;
     await video.play();
 
     const canvas = document.createElement("canvas");
     const ctx    = canvas.getContext("2d");
+    let lastDecode = 0;
 
     const loop = async () => {
       if (stopped) return;
 
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width  = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const now = Date.now();
+        if (now - lastDecode >= DECODE_INTERVAL_MS) {
+          lastDecode = now;
 
-        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code  = jsQR(frame.data, frame.width, frame.height);
+          const frame = drawDownscaledFrame(video, canvas, ctx);
+          if (frame) {
+            const code = jsQR(frame.data, frame.width, frame.height);
 
-        if (code && code.data) {
-          const bin = code.data.trim().toUpperCase();
+            if (code && code.data) {
+              showScanPulse(pulse);
 
-          // 1) Pattern check
-          if (!isValidBin(bin)) {
-            toast("Invalid Bin — must be 3 letters (AAA)", "error");
-            return; // keep loop running to scan again
-          }
+              const bin = code.data.trim().toUpperCase();
 
-          // 2) Existence check in CSV (server-side)
-          try {
-            const resp  = await fetch(`/validate-bin/${encodeURIComponent(bin)}`);
-            const info  = await resp.json();
-            if (!info.valid) {
-              toast("Bin not found in CSV", "error");
+              // 1) Pattern check
+              if (!isValidBin(bin)) {
+                toast("Invalid Bin — must be 3 letters (AAA)", "error");
+                requestAnimationFrame(loop);
+                return;
+              }
+
+              // 2) Existence check in CSV (server-side)
+              try {
+                const resp  = await fetch(`/validate-bin/${encodeURIComponent(bin)}`);
+                const info  = await resp.json();
+                if (!info.valid) {
+                  toast("Bin not found in CSV", "error");
+                  requestAnimationFrame(loop);
+                  return;
+                }
+              } catch (e) {
+                console.error("Bin validation failed", e);
+                toast("Unable to validate bin (check CSV)", "error");
+                requestAnimationFrame(loop);
+                return;
+              }
+
+              // 3) Bin is valid → start audit
+              currentBin = bin;
+              currentBinEl.textContent = bin;
+
+              overlay.remove();
+              stopScanner();
+
+              const auditor = localStorage.getItem("auditorName") || "Unknown";
+              await fetch(`/audit/start/${encodeURIComponent(bin)}?auditor=${encodeURIComponent(auditor)}`, {
+                method: "POST"
+              });
+
+              toast(`Bin ${bin} selected`, "success");
+
+              // Auto-start item scanning
+              startItemScan();
               return;
             }
-          } catch (e) {
-            console.error("Bin validation failed", e);
-            toast("Unable to validate bin (check CSV)", "error");
-            return;
           }
-
-          // 3) Bin is valid → start audit
-          currentBin = bin;
-          currentBinEl.textContent = bin;
-
-          overlay.remove();
-          stopScanner();
-
-          const auditor = localStorage.getItem("auditorName") || "Unknown";
-          await fetch(`/audit/start/${encodeURIComponent(bin)}?auditor=${encodeURIComponent(auditor)}`, {
-            method: "POST"
-          });
-
-          toast(`Bin ${bin} selected`, "success");
-
-          // Auto-start item scanning
-          startItemScan();
-          return;
         }
       }
 
@@ -307,7 +389,7 @@ async function startItemScan() {
   stopScanner();
   scanning = true;
 
-  const { overlay, video, stopBtn } = createOverlay(`Scanning Items • Bin ${currentBin}`);
+  const { overlay, video, stopBtn, pulse } = createOverlay(`Scanning Items • Bin ${currentBin}`);
   let stopped = false;
 
   stopBtn.onclick = () => {
@@ -317,33 +399,36 @@ async function startItemScan() {
   };
 
   try {
-    activeStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment" }
-    });
-
+    activeStream = await getCameraStream();
     video.srcObject = activeStream;
     await video.play();
 
     const canvas = document.createElement("canvas");
     const ctx    = canvas.getContext("2d");
+    let lastDecode = 0;
 
     const loop = async () => {
       if (!scanning || stopped) return;
 
       if (video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width  = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-        const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const code  = jsQR(frame.data, frame.width, frame.height);
-
         const now = Date.now();
-        if (code && code.data && now - lastScan > SCAN_COOLDOWN) {
-          lastScan = now;
-          const id = code.data.trim();
-          flashOK();
-          await handleItemScan(id);
+        if (now - lastDecode >= DECODE_INTERVAL_MS) {
+          lastDecode = now;
+
+          const frame = drawDownscaledFrame(video, canvas, ctx);
+          if (frame) {
+            const code = jsQR(frame.data, frame.width, frame.height);
+
+            if (code && code.data && now - lastScan > SCAN_COOLDOWN) {
+              lastScan = now;
+
+              showScanPulse(pulse);
+
+              const id = code.data.trim();
+              flashOK();
+              await handleItemScan(id);
+            }
+          }
         }
       }
 
