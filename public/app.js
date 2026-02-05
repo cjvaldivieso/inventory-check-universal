@@ -395,7 +395,13 @@ function drawDownscaledFrame(video, canvas, ctx) {
 // BIN VALIDATION
 // --------------------------------------------------
 function isValidBin(bin) {
-  return /^[A-Za-z]{3}$/.test(bin);
+  const b = (bin || "").trim().toUpperCase();
+
+  // Special exception bins
+  if (b === "SHELF" || b === "SHOES") return true;
+
+  // Default rule: 3 letters (e.g., MOU, ABC)
+  return /^[A-Z]{3}$/.test(b);
 }
 
 // --------------------------------------------------
