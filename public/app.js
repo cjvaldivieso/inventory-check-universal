@@ -1,4 +1,4 @@
-/* public/app.js — Shappi Inventory App (v18 final, FIXED + Battery Saver + Scan Pulse)
+/* public/app.js — Shappi Inventory App (v18 final, FIXED + Battery Saver + Scan Pulse + Scanner Frame)
    Contains:
    ✓ Chrome desktop CSV upload fix
    ✓ Working bin & item QR scanner
@@ -10,7 +10,8 @@
    ✓ Updated table columns (Item, Bin, WH Received, Status, Audit, Resolved)
    ✓ “Export Table” / “Export Full Audit”
    + Battery saver: throttled decode + downscaled frames + lower camera FPS
-   + Visual scan feedback: center ✓ pulse when a QR is accepted
+   + Visual scan feedback: center ✓ pulse (longer)
+   + Scanner frame: purple corner brackets while scanner is running
 */
 
 const socket = io();
@@ -185,7 +186,48 @@ function createOverlay(titleText) {
   `;
   overlay.appendChild(video);
 
-  // Visual scan feedback (center pulse ✓)
+  // Scanner frame (purple corner brackets)
+  const frame = document.createElement("div");
+  frame.className = "scan-frame";
+  frame.style = `
+    position: absolute;
+    width: 72vw;
+    max-width: 520px;
+    aspect-ratio: 1 / 1;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -35%);
+    pointer-events: none;
+    z-index: 9999;
+  `;
+
+  const cornerBase = `
+    position:absolute;
+    width:38px; height:38px;
+    border-color:#6c47ff;
+    border-style:solid;
+    border-width:0;
+  `;
+
+  const tl = document.createElement("div");
+  tl.style = cornerBase + `top:0; left:0; border-top-width:6px; border-left-width:6px; border-radius:10px 0 0 0;`;
+
+  const tr = document.createElement("div");
+  tr.style = cornerBase + `top:0; right:0; border-top-width:6px; border-right-width:6px; border-radius:0 10px 0 0;`;
+
+  const bl = document.createElement("div");
+  bl.style = cornerBase + `bottom:0; left:0; border-bottom-width:6px; border-left-width:6px; border-radius:0 0 0 10px;`;
+
+  const br = document.createElement("div");
+  br.style = cornerBase + `bottom:0; right:0; border-bottom-width:6px; border-right-width:6px; border-radius:0 0 10px 0;`;
+
+  frame.appendChild(tl);
+  frame.appendChild(tr);
+  frame.appendChild(bl);
+  frame.appendChild(br);
+  overlay.appendChild(frame);
+
+  // Visual scan feedback (center pulse ✓) — longer display
   const pulse = document.createElement("div");
   pulse.className = "scan-pulse";
   pulse.textContent = "✓";
@@ -219,7 +261,7 @@ function createOverlay(titleText) {
   overlay.appendChild(stopBtn);
 
   document.body.appendChild(overlay);
-  return { overlay, video, stopBtn, pulse };
+  return { overlay, video, stopBtn, pulse, frame };
 }
 
 function stopScanner() {
@@ -231,24 +273,25 @@ function stopScanner() {
 
 function showScanPulse(pulseEl) {
   if (!pulseEl) return;
+
   pulseEl.style.display = "flex";
   pulseEl.style.opacity = "1";
   pulseEl.style.transform = "translate(-50%, -50%) scale(1.0)";
 
+  // Hold longer so it’s detectable
   setTimeout(() => {
     pulseEl.style.opacity = "0";
     pulseEl.style.transform = "translate(-50%, -50%) scale(1.12)";
-  }, 80);
+  }, 350);
 
   setTimeout(() => {
     pulseEl.style.display = "none";
     pulseEl.style.opacity = "1";
     pulseEl.style.transform = "translate(-50%, -50%) scale(0.9)";
-  }, 260);
+  }, 650);
 }
 
 async function getCameraStream() {
-  // Conservative constraints that work well cross-device
   return navigator.mediaDevices.getUserMedia({
     video: {
       facingMode: "environment",
@@ -471,7 +514,6 @@ async function handleItemScan(itemId) {
       toast(`Move ${itemId} → ${data.correctBin}`, "warn");
     } else if (data.status === "remove-item") {
       label = "Remove"; cls = "red";
-      // black X (replace the red ❌)
       toast(`✖ Remove ${itemId}`, "error");
     } else if (data.status === "no-bin") {
       label = "No CSV"; cls = "red";
@@ -548,7 +590,6 @@ exportVisibleBtn.onclick = () => {
 
   [...logTbody.children].forEach(row => {
     const c = [...row.children].map(td => td.innerText.trim());
-    // c[0]=Item, c[1]=ExpectedBin(hidden), c[2]=Bin, c[3]=WH, c[4]=Status, c[5]=Audit, c[6]=Resolved
     csv += `${c[0]},${c[2]},${c[3]},${c[4]},${c[5]},${c[6]}\n`;
   });
 
