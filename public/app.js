@@ -1,17 +1,12 @@
-/* public/app.js — Shappi Inventory App (v18 final, FIXED + Battery Saver + Scan Pulse + Scanner Frame)
-   Contains:
-   ✓ Chrome desktop CSV upload fix
-   ✓ Working bin & item QR scanner
-   ✓ Auto-start item scanning after bin scan
-   ✓ "Scan Item QR" fallback mode
-   ✓ Bin format validation (AAA only)
-   ✓ Bin must exist in CSV (server validation)
-   ✓ Strong debounce to prevent duplicate reads
-   ✓ Updated table columns (Item, Bin, WH Received, Status, Audit, Resolved)
-   ✓ “Export Table” / “Export Full Audit”
-   + Battery saver: throttled decode + downscaled frames + lower camera FPS
-   + Visual scan feedback: center ✓ pulse (longer)
-   + Scanner frame: purple corner brackets while scanner is running
+/* public/app.js — Shappi Inventory App (v18 final, FIXED + Battery Saver + Scan Frame + Scan Badge)
+   Notes:
+   ✓ Same core workflow (CSV upload → scan bin → auto item scan → audit table → exports)
+   ✓ Battery saver: throttled decode + downscaled frames + lower camera FPS
+   ✓ Scanner frame: purple corner brackets while camera is running
+   ✓ Scan feedback: green badge with ✓ + scanned value (stays longer)
+   ✓ Fix: badge positioned ABOVE Stop button (no overlap)
+   ✓ Black X for remove-item toast
+   ✓ Toast timing: stable 5s (doesn't disappear early on rapid scans)
 */
 
 const socket = io();
@@ -199,6 +194,8 @@ function createOverlay(titleText) {
     transform: translate(-50%, -35%);
     pointer-events: none;
     z-index: 9999;
+    opacity: 0.95;
+    animation: scanFramePulse 1.2s ease-in-out infinite;
   `;
 
   const cornerBase = `
@@ -227,28 +224,43 @@ function createOverlay(titleText) {
   frame.appendChild(br);
   overlay.appendChild(frame);
 
-  // Visual scan feedback (center pulse ✓) — longer display
-  const pulse = document.createElement("div");
-  pulse.className = "scan-pulse";
-  pulse.textContent = "✓";
-  pulse.style = `
+  // Inject keyframes once (frame "breathing")
+  if (!document.getElementById("scanFrameKeyframes")) {
+    const styleTag = document.createElement("style");
+    styleTag.id = "scanFrameKeyframes";
+    styleTag.textContent = `
+      @keyframes scanFramePulse {
+        0%   { opacity: 0.55; }
+        50%  { opacity: 0.95; }
+        100% { opacity: 0.55; }
+      }
+    `;
+    document.head.appendChild(styleTag);
+  }
+
+  // Scan badge (shows ✓ + scanned value) — positioned ABOVE STOP so it doesn't overlap
+  const badge = document.createElement("div");
+  badge.className = "scan-badge";
+  badge.style = `
     position: fixed;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%) scale(0.9);
-    width: 120px; height: 120px;
-    border-radius: 999px;
-    background: rgba(0,0,0,0.55);
-    border: 3px solid #28a745;
-    color: #28a745;
-    font-size: 76px;
+    bottom: 110px;       /* IMPORTANT: keep above Stop button */
+    left: 50%;
+    transform: translateX(-50%);
+    background: #28a745;
+    color: #fff;
     font-weight: 800;
+    font-size: 20px;
+    padding: 12px 18px;
+    border-radius: 16px;
     display: none;
     align-items: center;
     justify-content: center;
+    gap: 10px;
+    min-width: 210px;
     z-index: 10000;
-    opacity: 1;
+    box-shadow: 0 10px 24px rgba(0,0,0,0.35);
   `;
-  overlay.appendChild(pulse);
+  overlay.appendChild(badge);
 
   const stopBtn = document.createElement("button");
   stopBtn.textContent = "🛑 Stop";
@@ -257,11 +269,12 @@ function createOverlay(titleText) {
     border:none;color:#fff;font-size:18px;
     padding:12px 22px;border-radius:12px;
     font-weight:600;
+    z-index:10001;       /* IMPORTANT: always above badge */
   `;
   overlay.appendChild(stopBtn);
 
   document.body.appendChild(overlay);
-  return { overlay, video, stopBtn, pulse, frame };
+  return { overlay, video, stopBtn, badge, frame };
 }
 
 function stopScanner() {
@@ -271,24 +284,27 @@ function stopScanner() {
   document.querySelectorAll(".shappi-scan-overlay")?.forEach(o => o.remove());
 }
 
-function showScanPulse(pulseEl) {
-  if (!pulseEl) return;
+function showScanBadge(badgeEl, text) {
+  if (!badgeEl) return;
 
-  pulseEl.style.display = "flex";
-  pulseEl.style.opacity = "1";
-  pulseEl.style.transform = "translate(-50%, -50%) scale(1.0)";
+  // Update content each scan
+  badgeEl.textContent = `✓ ${text}`;
 
-  // Hold longer so it’s detectable
+  badgeEl.style.display = "flex";
+  badgeEl.style.opacity = "1";
+  badgeEl.style.transform = "translateX(-50%) scale(1.0)";
+
+  // Stay visible longer so it’s unmistakable
   setTimeout(() => {
-    pulseEl.style.opacity = "0";
-    pulseEl.style.transform = "translate(-50%, -50%) scale(1.12)";
-  }, 350);
+    badgeEl.style.opacity = "0";
+    badgeEl.style.transform = "translateX(-50%) scale(1.03)";
+  }, 700);
 
   setTimeout(() => {
-    pulseEl.style.display = "none";
-    pulseEl.style.opacity = "1";
-    pulseEl.style.transform = "translate(-50%, -50%) scale(0.9)";
-  }, 650);
+    badgeEl.style.display = "none";
+    badgeEl.style.opacity = "1";
+    badgeEl.style.transform = "translateX(-50%) scale(1.0)";
+  }, 950);
 }
 
 async function getCameraStream() {
@@ -333,7 +349,7 @@ scanBinBtn.onclick = () => startBinScan();
 async function startBinScan() {
   stopScanner();
 
-  const { overlay, video, stopBtn, pulse } = createOverlay("Scan Bin QR");
+  const { overlay, video, stopBtn, badge } = createOverlay("Scan Bin QR");
   let stopped = false;
 
   stopBtn.onclick = () => { stopped = true; stopScanner(); };
@@ -360,9 +376,8 @@ async function startBinScan() {
             const code = jsQR(frame.data, frame.width, frame.height);
 
             if (code && code.data) {
-              showScanPulse(pulse);
-
               const bin = code.data.trim().toUpperCase();
+              showScanBadge(badge, bin);
 
               // 1) Pattern check
               if (!isValidBin(bin)) {
@@ -432,7 +447,7 @@ async function startItemScan() {
   stopScanner();
   scanning = true;
 
-  const { overlay, video, stopBtn, pulse } = createOverlay(`Scanning Items • Bin ${currentBin}`);
+  const { overlay, video, stopBtn, badge } = createOverlay(`Scanning Items • Bin ${currentBin}`);
   let stopped = false;
 
   stopBtn.onclick = () => {
@@ -465,9 +480,9 @@ async function startItemScan() {
             if (code && code.data && now - lastScan > SCAN_COOLDOWN) {
               lastScan = now;
 
-              showScanPulse(pulse);
-
               const id = code.data.trim();
+              showScanBadge(badge, id);
+
               flashOK();
               await handleItemScan(id);
             }
@@ -514,7 +529,7 @@ async function handleItemScan(itemId) {
       toast(`Move ${itemId} → ${data.correctBin}`, "warn");
     } else if (data.status === "remove-item") {
       label = "Remove"; cls = "red";
-      toast(`✖ Remove ${itemId}`, "error");
+      toast(`✖ Remove ${itemId}`, "error"); // black X
     } else if (data.status === "no-bin") {
       label = "No CSV"; cls = "red";
       toast(`${itemId} not in CSV`, "error");
@@ -590,6 +605,7 @@ exportVisibleBtn.onclick = () => {
 
   [...logTbody.children].forEach(row => {
     const c = [...row.children].map(td => td.innerText.trim());
+    // c[0]=Item, c[1]=ExpectedBin(hidden), c[2]=Bin, c[3]=WH, c[4]=Status, c[5]=Audit, c[6]=Resolved
     csv += `${c[0]},${c[2]},${c[3]},${c[4]},${c[5]},${c[6]}\n`;
   });
 
@@ -634,6 +650,7 @@ let toastTimer = null;
 
 function toast(msg, type = "info") {
   const t = document.getElementById("toast");
+  if (!t) return;
 
   if (toastTimer) {
     clearTimeout(toastTimer);
